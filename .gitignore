@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Operating system and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Personal or generated Word documents
+*.doc
+*.docx
+*.docm
+*.dotx
+*.dotm
+*.pdf
+
+# Generated audits, validation reports and profiles
+*.audit.json
+*.validation.json
+*.before-audit.json
+*.after-audit.json
+*.profile.local.json
+
+# Temporary Office files
+~$*
+*.tmp
+*.bak
+
+# Rendered output
+rendered-pages/
+rendered/

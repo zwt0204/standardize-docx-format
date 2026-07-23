@@ -1,0 +1,114 @@
+{
+  "name": "广州南方学院成人本科毕业论文模板 v2 草案",
+  "requirements": {
+    "sourceType": "reference-template",
+    "sources": ["附件4：广州南方学院成人高等学历继续教育本科生毕业论文（设计）写作格式模板.docx"],
+    "unresolved": [
+      "将封面现有填写文本逐项替换为稳定的双花括号占位符后，才能建立必填字段映射",
+      "一级标题使用中文序号而图表要求阿拉伯章号时，需要学校确认题注章号字段策略",
+      "参考文献最终采用著者-出版年制还是顺序编码制"
+    ],
+    "conflicts": []
+  },
+  "defaultRun": {
+    "latinFont": "Times New Roman",
+    "eastAsiaFont": "宋体",
+    "complexScriptFont": "Times New Roman",
+    "sizePt": 12,
+    "updateTheme": true
+  },
+  "styles": {
+    "Normal": {
+      "name": "论文正文",
+      "run": {"latinFont": "Times New Roman", "eastAsiaFont": "宋体", "sizePt": 12},
+      "paragraph": {"alignment": "justify", "lineSpacing": 1.5, "spaceBeforePt": 0, "spaceAfterPt": 0, "firstLineChars": 2, "widowControl": true}
+    },
+    "Heading1": {
+      "name": "一级标题",
+      "basedOn": "Normal",
+      "next": "Normal",
+      "run": {"latinFont": "Times New Roman", "eastAsiaFont": "黑体", "sizePt": 14, "bold": true},
+      "paragraph": {"alignment": "left", "spaceBeforePt": 14, "spaceAfterPt": 14, "keepNext": true, "outlineLevel": 0}
+    },
+    "Heading2": {
+      "name": "二级标题",
+      "basedOn": "Normal",
+      "next": "Normal",
+      "run": {"latinFont": "Times New Roman", "eastAsiaFont": "黑体", "sizePt": 14, "bold": true},
+      "paragraph": {"alignment": "left", "firstLineChars": 2, "keepNext": true, "outlineLevel": 1}
+    },
+    "Heading3": {
+      "name": "三级标题",
+      "basedOn": "Normal",
+      "next": "Normal",
+      "run": {"latinFont": "Times New Roman", "eastAsiaFont": "宋体", "sizePt": 12},
+      "paragraph": {"alignment": "left", "keepNext": true, "outlineLevel": 2}
+    },
+    "Heading4": {
+      "name": "四级标题",
+      "basedOn": "Normal",
+      "next": "Normal",
+      "run": {"latinFont": "Times New Roman", "eastAsiaFont": "宋体", "sizePt": 12},
+      "paragraph": {"alignment": "left", "keepNext": true, "outlineLevel": 3}
+    },
+    "Heading5": {
+      "name": "五级标题",
+      "basedOn": "Normal",
+      "next": "Normal",
+      "run": {"latinFont": "Times New Roman", "eastAsiaFont": "宋体", "sizePt": 12},
+      "paragraph": {"alignment": "left", "keepNext": true, "outlineLevel": 4}
+    },
+    "ChineseAbstract": {
+      "name": "中文摘要正文",
+      "basedOn": "Normal",
+      "next": "ChineseAbstract",
+      "run": {"latinFont": "Times New Roman", "eastAsiaFont": "楷体_GB2312", "sizePt": 12},
+      "paragraph": {"alignment": "justify", "lineSpacing": 1.5, "firstLineChars": 2}
+    },
+    "EnglishAbstract": {
+      "name": "英文摘要正文",
+      "basedOn": "Normal",
+      "next": "EnglishAbstract",
+      "run": {"latinFont": "Times New Roman", "eastAsiaFont": "宋体", "sizePt": 12},
+      "paragraph": {"alignment": "justify", "lineSpacing": 1.5, "firstLineChars": 2}
+    }
+  },
+  "pageNumbers": [
+    {"section": 0, "format": "upper-roman", "start": 1},
+    {"section": 1, "format": "upper-roman", "start": 1},
+    {"section": 4, "format": "decimal", "start": 1}
+  ],
+  "headingNumbering": {
+    "enabled": true,
+    "styles": ["Heading1", "Heading2", "Heading3", "Heading4", "Heading5"],
+    "patterns": ["%1、", "（%2）", "%3.", "（%4）", "%5"],
+    "formats": ["chinese-counting", "chinese-counting", "decimal", "decimal", "decimal-enclosed-circle"],
+    "starts": [1, 1, 1, 1, 1],
+    "suffix": "space"
+  },
+  "paragraphRules": [
+    {
+      "match": {"textRegex": "^[一二三四五六七八九十]+、", "section": 4, "inTextBox": false},
+      "style": "Heading1",
+      "textRegexReplace": {"pattern": "^[一二三四五六七八九十]+、\\s*", "replacement": ""},
+      "maxMatches": 50
+    },
+    {
+      "match": {"textRegex": "^（[一二三四五六七八九十]+）", "section": 4, "inTextBox": false},
+      "style": "Heading2",
+      "textRegexReplace": {"pattern": "^（[一二三四五六七八九十]+）\\s*", "replacement": ""},
+      "maxMatches": 100
+    }
+  ],
+  "fields": {"updateOnOpen": true},
+  "validation": {
+    "sectionCount": 6,
+    "requiredTexts": ["摘要", "Abstract", "目录", "参考文献", "致谢"],
+    "noPlaceholders": ["\\{\\{[^}]+\\}\\}"],
+    "requiredFields": {"TOC": 1, "PAGE": 1},
+    "wordCounts": [
+      {"name": "中文摘要字数", "startRegex": "^摘\\s*要$", "endRegex": "^关键词[:：]", "mode": "cjkCharacters", "min": 300, "max": 500},
+      {"name": "英文摘要词数", "startRegex": "^Abstract$", "endRegex": "^Key\\s*words?[:：]", "mode": "latinWords", "min": 250, "max": 400}
+    ]
+  }
+}

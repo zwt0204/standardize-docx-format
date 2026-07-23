@@ -1,0 +1,4 @@
+interface:
+  display_name: "DOCX 格式标准化"
+  short_description: "从模板或文字规范装配、标准化并验收 Word 论文格式"
+  default_prompt: "使用 $standardize-docx-format 根据官方模板或文字规范审计、标准化并验证这个 DOCX；保留复杂布局并列出未决规则。"
