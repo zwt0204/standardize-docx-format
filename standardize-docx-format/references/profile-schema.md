@@ -189,7 +189,15 @@
 }
 ```
 
-匹配条件：`textEquals`、`textContains`、`startsWith`、`textRegex`、`currentStyle`、`section`、`paragraphIndex`、`inTable`、`inTextBox`、`normalizeWhitespace`。
+匹配条件：`textEquals`、`textContains`、`startsWith`、`textRegex`、`textNotRegex`、`currentStyle`、`currentStyleNotIn`、`styleNameRegex`、`styleNameNotRegex`、`section`、`paragraphIndex`、`inTable`、`inTextBox`、`normalizeWhitespace`。
+
+TOC / 目录保护建议：
+
+- 真实中文论文几乎都有 `toc 1` / `toc 2` 目录行，且文本形态与章节标题相似（如 `1 绪论 1`、`1.1 研究背景 1`）。
+- 对“数字开头即标题”的规则，务必排除目录样式：`styleNameNotRegex: "(?i)^toc"`。
+- 目录条目常以页码结尾；可用 `textNotRegex: ".+\d$"` 降低误伤（在 `normalizeWhitespace` 后生效）。
+- 若正文标题本身已带手工编号，而 profile 又启用了 `headingNumbering`，可用 `textRegexReplace` 去掉正文标题前缀编号；**不要**对目录行做同样替换。
+
 
 动作：`style`、`paragraph`、`run`、`clearParagraphFormatting`、`clearRunFormatting`、`textRegexReplace`、`remove`、`required`、`maxMatches`。
 

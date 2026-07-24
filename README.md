@@ -531,3 +531,10 @@ Skill 结构校验可使用 Codex 自带的 `skill-creator/scripts/quick_validat
 ## 许可证
 
 当前仓库未附加开源许可证。未经版权所有者明确授权，默认保留全部权利。
+
+
+## 2026-07 update: thesis TOC safety
+
+- `apply_profile.py` paragraph matching now supports `textNotRegex`, `currentStyleNotIn`, `styleNameRegex`, and `styleNameNotRegex`, and resolves style display names from `word/styles.xml`.
+- Example profiles `thesis-cn.example.json` and `guangzhou-nanfang-thesis.example.json` protect TOC styles so directory lines are not rewritten as body headings.
+- When applying number-stripping heading rules, exclude TOC entries first; otherwise chapter structure and TOC will both look wrong on real thesis documents.

@@ -792,7 +792,21 @@ def paragraph_text(paragraph: Node, normalize: bool = False) -> str:
     return " ".join(value.split()) if normalize else value
 
 
-def paragraph_infos(document: minidom.Document) -> list[dict[str, Any]]:
+
+def style_id_to_name(parts: dict[str, bytes]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    raw = parts.get("word/styles.xml")
+    if not raw:
+        return mapping
+    document = parse_xml(raw)
+    for style in document.getElementsByTagName("w:style"):
+        style_id = style.getAttribute("w:styleId")
+        name_node = direct_child(style, "w:name")
+        mapping[style_id] = name_node.getAttribute("w:val") if name_node is not None else style_id
+    return mapping
+
+
+def paragraph_infos(document: minidom.Document, style_names: dict[str, str] | None = None) -> list[dict[str, Any]]:
     bodies = document.getElementsByTagName("w:body")
     if not bodies:
         return []
@@ -812,12 +826,14 @@ def paragraph_infos(document: minidom.Document) -> list[dict[str, Any]]:
             seen.add(identity)
             p_pr = direct_child(paragraph, "w:pPr")
             style = attr(direct_child(p_pr, "w:pStyle"), "w:val")
+            style_names = style_names or {}
             infos.append(
                 {
                     "paragraph": paragraph,
                     "index": paragraph_index,
                     "section": section_index,
                     "style": style,
+                    "styleName": style_names.get(style or "", style or ""),
                     "inTable": ancestor(paragraph.parentNode, "w:tbl") is not None,
                     "inTextBox": ancestor(paragraph.parentNode, "w:txbxContent") is not None,
                 }
@@ -835,12 +851,18 @@ def paragraph_matches(info: dict[str, Any], match: dict[str, Any]) -> bool:
     raw_text = paragraph_text(paragraph)
     normalized = " ".join(raw_text.split())
     text = normalized if match.get("normalizeWhitespace", True) else raw_text
+    style_name = str(info.get("styleName") or "")
+    style_id = str(info.get("style") or "")
     checks = (
         ("textEquals", lambda value: text == str(value)),
         ("textContains", lambda value: str(value) in text),
         ("startsWith", lambda value: text.startswith(str(value))),
         ("textRegex", lambda value: re.search(str(value), text) is not None),
-        ("currentStyle", lambda value: info.get("style") == str(value)),
+        ("textNotRegex", lambda value: re.search(str(value), text) is None),
+        ("currentStyle", lambda value: style_id == str(value)),
+        ("currentStyleNotIn", lambda value: style_id not in set(value if isinstance(value, list) else [value])),
+        ("styleNameRegex", lambda value: re.search(str(value), style_name, flags=re.IGNORECASE) is not None),
+        ("styleNameNotRegex", lambda value: re.search(str(value), style_name, flags=re.IGNORECASE) is None),
         ("section", lambda value: info.get("section") == value),
         ("paragraphIndex", lambda value: info.get("index") == value),
         ("inTable", lambda value: info.get("inTable") is bool(value)),
@@ -906,13 +928,13 @@ def replace_text_in_paragraph(
 
 
 def apply_paragraph_rules(
-    document: minidom.Document, rules: list[Any], default_run: dict[str, Any], summary: dict[str, Any]
+    document: minidom.Document, rules: list[Any], default_run: dict[str, Any], summary: dict[str, Any], style_names: dict[str, str] | None = None
 ) -> None:
     if not rules:
         return
     if not isinstance(rules, list):
         raise ValueError("paragraphRules must be an array")
-    infos = paragraph_infos(document)
+    infos = paragraph_infos(document, style_names=style_names)
     report: list[dict[str, Any]] = []
     for rule_index, rule in enumerate(rules):
         if not isinstance(rule, dict):
@@ -1511,7 +1533,8 @@ def apply_profile(
     summary["stylesConfigured"] = apply_styles(styles_root, profile.get("styles", {}), default_run)
     apply_heading_numbering(parts, styles_root, profile.get("headingNumbering", {}), summary)
     apply_page_numbers(document, profile.get("pageNumbers", []), summary)
-    apply_paragraph_rules(document, profile.get("paragraphRules", []), default_run, summary)
+    style_names = style_id_to_name(parts)
+    apply_paragraph_rules(document, profile.get("paragraphRules", []), default_run, summary, style_names=style_names)
     apply_caption_rules(document, profile.get("captionRules", []), default_run, summary)
     apply_bookmark_rules(document, profile.get("bookmarkRules", []), summary)
     apply_headers_footers(parts, document, profile.get("headersFooters", []), summary)

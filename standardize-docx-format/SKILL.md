@@ -16,6 +16,34 @@ Normalize an existing `.docx` without rewriting its content model. Preserve the 
 - Exclude cover pages, declarations, approval forms, or other special sections when their layout intentionally differs.
 - Never hard-code displayed field results as plain text. Preserve or create fields and request field refresh on open.
 
+
+
+## Thesis / TOC safety
+
+When standardizing Chinese undergraduate/graduate theses:
+
+1. **Protect table-of-contents paragraphs.** Styles named like `toc 1` / `toc 2` must not be remapped by generic “starts with a number” heading rules.
+2. **Prefer style-aware paragraph rules.** Use `styleNameNotRegex`, `styleNameRegex`, `currentStyleNotIn`, and `textNotRegex` before stripping numbering.
+3. **Do not invent a school standard from a generic example.** `references/thesis-cn.example.json` is a starting point, not a school-specific final profile. If the user provides a school template or PDF rules, translate them into a profile first.
+4. **Audit before/after headings and TOC.** Confirm TOC entries remain TOC styles and body chapters remain hierarchical headings.
+5. **Field refresh.** After creating or preserving TOC fields, ask the user to update fields in Word on open.
+
+Safer Arabic-number heading rule pattern:
+
+```json
+{
+  "match": {
+    "textRegex": "^\\d+\\s+\\S+",
+    "styleNameNotRegex": "(?i)^toc",
+    "textNotRegex": ".+\\d$"
+  },
+  "style": "Heading1",
+  "textRegexReplace": {"pattern": "^\\d+\\s+", "replacement": ""},
+  "maxMatches": 50
+}
+```
+
+
 ## Choose the execution path
 
 1. **Reference template available:** use the template as the authoritative source. Preserve cover drawings/text boxes, sections, relationships, headers, footers, fields, and unknown extensions. Fill exact placeholders and map thesis content to semantic styles; do not rebuild encoded layout.
