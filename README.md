@@ -4,7 +4,17 @@
 
 它既可以根据学校提供的官方 Word 模板工作，也可以把自然语言、PDF、网页或截图中的格式要求转换为结构化 JSON Profile，再确定性地应用到现有 DOCX 文件中。
 
-> 这个项目首先是一个 Codex Skill，不是 Word 插件，也不是带图形界面的排版软件。核心脚本只依赖 Python 标准库，可以独立完成 DOCX 包审计、Profile 应用和结构验收；复杂需求识别、模板区域映射和未决规则处理由 Codex 工作流负责。
+v2 把这条链路补成可解释的文档编译器：
+
+```text
+规范 / 模板 → Requirement IR / Document Spec → Profile
+      → Audit / Semantic AST → Diff → Repair Plan
+      → 确认后 Apply → Validate → Visual QA
+```
+
+LLM 负责理解规范；OOXML 修改仍然是确定性的。默认先给出 Diff 和 Repair Plan，不静默改文档。
+
+> 这个项目首先是一个 Codex Skill，不是 Word 插件，也不是带图形界面的排版软件。核心脚本只依赖 Python 标准库，可以独立完成 DOCX 包审计、语义建模、Diff、Repair Plan、Profile 应用、结构验收和视觉启发式检查；复杂需求识别、模板区域映射和未决规则处理由 Codex 工作流负责。最终分页仍以 Word 或 LibreOffice 渲染为准。
 
 ## 主要能力
 
@@ -30,7 +40,11 @@
 - 支持按文本、正则、现有样式、节、段落位置、表格或文本框位置映射语义样式。
 - 支持删除模板教学说明、清理手写标题编号和统一正文格式。
 - 支持结构、必备章节、字段、书签、页码、页眉页脚、占位符和中英文摘要字数验收。
-- 支持旧版 Profile，并提供向后兼容的 v2 Profile。
+- 支持把论文提升为 Document Semantic AST：封面、摘要、目录、章、图题、表题、参考文献。
+- 支持 Profile Diff 和 Repair Plan：先解释 expected vs actual，用户确认后再 apply。
+- 支持 Visual QA：表格/图片溢出、标题孤行风险、图题表题分离、连续空白；可选 LibreOffice/`docx-cli` 渲染。
+- 支持从规范文本/PDF 草稿编译 Profile，以及从官方模板反推 Profile。
+- 支持旧版 Profile，并提供向后兼容的 v2 Profile / Document Spec。
 
 ## 适用场景
 
@@ -89,10 +103,18 @@ Codex 会先把要求翻译成 JSON Profile。无法量化、互相矛盾或缺�
     ├── agents/
     │   └── openai.yaml
     ├── scripts/
+    │   ├── standardize.py          # 统一 CLI / pipeline
     │   ├── audit_docx.py
+    │   ├── document_model.py
+    │   ├── compile_requirements.py
+    │   ├── analyze_template.py
+    │   ├── diff_profile.py
+    │   ├── repair_plan.py
     │   ├── apply_profile.py
-    │   └── validate_docx.py
+    │   ├── validate_docx.py
+    │   └── visual_qa.py
     └── references/
+        ├── v2-architecture.md
         ├── profile-schema.md
         ├── spec-driven-workflow.md
         ├── ooxml-advanced.md
@@ -256,6 +278,54 @@ python .\standardize-docx-format\scripts\validate_docx.py `
 
 验收器会输出机器可读 JSON。如果存在格式或内容要求不满足，脚本会使用非零退出码，便于接入批处理和 CI。
 
+### 4. v2 编译器流水线
+
+先看差异和修复计划，确认后再写入：
+
+```powershell
+python .\standardize-docx-format\scripts\standardize.py compile `
+  --input ".\spec.txt" `
+  --output ".\requirement-ir.json" `
+  --profile-out ".\profile.json"
+
+python .\standardize-docx-format\scripts\standardize.py pipeline `
+  --input "D:\docs\thesis.docx" `
+  --profile ".\profile.json" `
+  --work-dir ".\qa-output"
+
+python .\standardize-docx-format\scripts\standardize.py pipeline `
+  --input "D:\docs\thesis.docx" `
+  --profile ".\profile.json" `
+  --output "D:\docs\thesis.standardized.docx" `
+  --work-dir ".\qa-output" `
+  --apply --yes
+```
+
+工作目录会写出：
+
+```text
+qa-output/
+  before-audit.json
+  document-model.json
+  diff.json
+  repair-plan.json
+  validation.json
+  visual.json
+  visual-report.html
+  report.html
+```
+
+单独命令：
+
+```powershell
+python .\standardize-docx-format\scripts\standardize.py model --input thesis.docx --output model.json
+python .\standardize-docx-format\scripts\standardize.py diff --input thesis.docx --profile profile.json --text
+python .\standardize-docx-format\scripts\standardize.py plan --input thesis.docx --profile profile.json --text
+python .\standardize-docx-format\scripts\standardize.py visual --input thesis.docx --html visual-report.html
+python .\standardize-docx-format\scripts\standardize.py repair-visual --input thesis.docx --output thesis.visual.docx --profile profile.json
+python .\standardize-docx-format\scripts\standardize.py analyze-template --input template.docx --profile-out template-profile.json
+```
+
 ## 最小 Profile 示例
 
 ```json
@@ -331,6 +401,7 @@ python .\standardize-docx-format\scripts\validate_docx.py `
 - `standardize-docx-format/references/profile-schema.md`
 - `standardize-docx-format/references/spec-driven-workflow.md`
 - `standardize-docx-format/references/ooxml-advanced.md`
+- `standardize-docx-format/references/v2-architecture.md`
 
 ## 模板占位符
 
@@ -419,21 +490,23 @@ python .\standardize-docx-format\scripts\validate_docx.py `
 推荐每次执行完整闭环：
 
 ```text
-原文件
+原文件 / 规范 / 模板
   ↓
-修改前审计
+Requirement IR + Document Spec
   ↓
-生成/确认 Profile
+修改前审计 + Semantic AST
+  ↓
+Diff + Repair Plan
+  ↓
+用户确认
   ↓
 输出新 DOCX
   ↓
-修改后审计
-  ↓
-机器验收
+结构验收 + Visual QA
   ↓
 Word 更新全部字段
   ↓
-最终视觉验版
+最终渲染验版
 ```
 
 重点检查：
@@ -485,7 +558,23 @@ Ctrl+A → F9
 python -B -X utf8 -m py_compile `
   .\standardize-docx-format\scripts\audit_docx.py `
   .\standardize-docx-format\scripts\apply_profile.py `
-  .\standardize-docx-format\scripts\validate_docx.py
+  .\standardize-docx-format\scripts\validate_docx.py `
+  .\standardize-docx-format\scripts\document_model.py `
+  .\standardize-docx-format\scripts\diff_profile.py `
+  .\standardize-docx-format\scripts\repair_plan.py `
+  .\standardize-docx-format\scripts\visual_qa.py `
+  .\standardize-docx-format\scripts\layout_estimate.py `
+  .\standardize-docx-format\scripts\visual_repair.py `
+  .\standardize-docx-format\scripts\compile_requirements.py `
+  .\standardize-docx-format\scripts\analyze_template.py `
+  .\standardize-docx-format\scripts\standardize.py
+```
+
+回归测试：
+
+```powershell
+python -B -X utf8 .\standardize-docx-format\scripts\test_paragraph_match_safety.py
+python -B -X utf8 .\standardize-docx-format\scripts\test_v2_pipeline.py
 ```
 
 JSON 示例解析：
@@ -521,12 +610,12 @@ Skill 结构校验可使用 Codex 自带的 `skill-creator/scripts/quick_validat
 
 建议的后续扩展包括：
 
-- 批量目录和批量验收命令。
-- HTML/PDF 格式规范半自动提取器。
+- 更完整的渲染页分页检测（标题孤行、图题跨页、参考文献跨页）。
+- HTML/网页规范和截图 OCR 的 Requirement Compiler。
 - 更完整的按章图表编号策略。
-- Word/LibreOffice 自动渲染与页面截图对比。
 - Profile JSON Schema 和编辑器自动补全。
 - GitHub Actions 自动测试与发布。
+- 浏览器端预览（核心 Engine 稳定后再做）。
 
 ## 许可证
 

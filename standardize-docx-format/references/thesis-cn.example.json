@@ -1,5 +1,17 @@
 {
   "name": "中文毕业论文通用 v2 示例",
+  "document": {
+    "type": "thesis",
+    "sections": [
+      {"id": "cover", "required": false},
+      {"id": "abstract", "required": true, "languages": ["zh", "en"]},
+      {"id": "toc", "required": true},
+      {"id": "chapter", "required": true, "repeatable": true, "min": 1},
+      {"id": "references", "required": true},
+      {"id": "acknowledgement", "required": false},
+      {"id": "appendix", "required": false}
+    ]
+  },
   "requirements": {
     "sourceType": "description",
     "sources": [

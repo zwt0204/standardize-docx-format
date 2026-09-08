@@ -26,6 +26,10 @@ Thumbs.db
 *.before-audit.json
 *.after-audit.json
 *.profile.local.json
+*.diff.json
+*.repair.json
+*.visual.json
+qa-output/
 
 # Temporary Office files
 ~$*

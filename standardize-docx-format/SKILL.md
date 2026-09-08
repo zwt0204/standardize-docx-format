@@ -54,6 +54,17 @@ Use `docx-cli` when the `docx` command exists. It is the preferred engine for lo
 
 Use the bundled Python scripts for deterministic OOXML operations commonly missing from high-level tools: script-specific fonts, per-section layout, page-number restarts, semantic paragraph rules, Chinese/circled numbering, cross-run template replacements, independent first/default/even headers and footers, Word fields, bookmarks, captions, and measurable validation.
 
+v2 compiler commands live in `scripts/standardize.py`. Prefer this sequence over jumping straight to `apply_profile.py`:
+
+1. `audit` / `model` to understand the source document.
+2. `compile` (spec text/PDF) or `analyze-template` (official DOCX) to draft a profile.
+3. `diff` then `plan` so the user can see expected vs actual and confirm repairs.
+4. `apply` only after confirmation. Never apply a repair plan silently.
+5. `validate` for structural checks and `visual` for layout risks / pagination estimates / optional render.
+6. `repair-visual` only after confirmation, and only for conservative keepNext / image-scale fixes.
+
+Read [references/v2-architecture.md](references/v2-architecture.md) when building a semantic AST, repair plan, or visual QA loop.
+
 ## Workflow
 
 ### 1. Prepare safely
@@ -97,6 +108,17 @@ Use the v2 audit to inspect bookmarks, fields, drawings/text boxes, content cont
 - Use `paragraphRules` only with bounded, auditable locators. Avoid broad global direct-format clearing.
 - Use `replacements` for exact cover/header/footer/text-box placeholders. Never replace floating objects with ordinary body paragraphs.
 - Record structural checks, abstract word counts, required fields/bookmarks, and residual placeholder patterns in `validation`.
+
+### 3b. Explain before mutating
+
+When the user has not already confirmed a profile application, run:
+
+```powershell
+python scripts/standardize.py diff --input input.docx --profile profile.json --text
+python scripts/standardize.py plan --input input.docx --profile profile.json --text
+```
+
+Show the repair plan. Do not call `apply` until the user accepts it, or the request already amounts to an explicit apply.
 
 ### 4. Apply deterministic standardization
 
@@ -163,8 +185,14 @@ Do not globally clear direct formatting unless the specification explicitly says
 - Read [references/spec-driven-workflow.md](references/spec-driven-workflow.md) whenever no authoritative DOCX template exists.
 - Read [references/ooxml-advanced.md](references/ooxml-advanced.md) before changing fields, numbering, script fonts, or section page numbering outside the bundled script.
 - Use `scripts/audit_docx.py` for read-only package/style/layout inventory.
+- Use `scripts/document_model.py` or `standardize.py model` for a semantic Document AST.
+- Use `scripts/compile_requirements.py` to turn specification text into a draft profile; use `scripts/analyze_template.py` for an official template.
+- Use `scripts/diff_profile.py` and `scripts/repair_plan.py` before any mutation.
 - Use `scripts/apply_profile.py` for deterministic v1/v2 profile application.
 - Use `scripts/validate_docx.py` for structural, word-count, placeholder, field, bookmark, style, page-number, and header/footer checks.
+- Use `scripts/visual_qa.py` for overflow, orphan headings, caption split, pagination estimates, and optional PDF/PNG render.
+- Use `scripts/visual_repair.py` or `standardize.py repair-visual` for conservative keepNext / image-scale repairs.
+- Use `scripts/standardize.py pipeline` to emit before/after audits, diff, repair plan, validation, visual reports, and `report.html`.
 
 ## Deliverables
 
@@ -173,5 +201,6 @@ Return:
 - The standardized `.docx` output path.
 - The applied profile path or a concise list of resolved rules.
 - Before/after audit paths.
-- Machine-readable validation report and render status.
+- Document AST / diff / repair-plan JSON when those steps ran.
+- Machine-readable validation report and visual QA report.
 - Any unresolved requirements that need Microsoft Word field refresh or visual judgment.

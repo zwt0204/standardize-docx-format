@@ -82,6 +82,14 @@ python scripts/audit_docx.py output.standardized.docx --output after-audit.json
 python scripts/validate_docx.py --input output.standardized.docx --profile profile.json --output validation.json
 ```
 
+v2 推荐先编译规范、再看 Diff / Repair Plan，确认后才 apply：
+
+```powershell
+python scripts/standardize.py compile --input spec.txt --output requirement-ir.json --profile-out profile.json
+python scripts/standardize.py pipeline --input input.docx --profile profile.json --work-dir .\qa-output
+python scripts/standardize.py pipeline --input input.docx --profile profile.json --output output.standardized.docx --work-dir .\qa-output --apply --yes
+```
+
 最后在 Microsoft Word 中：
 
 1. 更新全部域。

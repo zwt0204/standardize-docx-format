@@ -146,6 +146,73 @@ def section_report(
     }
 
 
+def toggle_on(node: Node | None) -> bool | None:
+    if node is None:
+        return None
+    value = attr(node, "w:val")
+    if value is None:
+        return True
+    return str(value).lower() not in {"0", "false", "off"}
+
+
+def paragraph_props(p_pr: Node | None) -> dict[str, Any]:
+    if p_pr is None:
+        return {}
+    spacing = direct_child(p_pr, "w:spacing")
+    indent = direct_child(p_pr, "w:ind")
+    jc = direct_child(p_pr, "w:jc")
+    outline = direct_child(p_pr, "w:outlineLvl")
+    line = attr(spacing, "w:line")
+    line_rule = attr(spacing, "w:lineRule") or "auto"
+    line_spacing = None
+    line_spacing_exact_pt = None
+    if line and line.lstrip("-").isdigit():
+        value = int(line)
+        if line_rule == "auto":
+            line_spacing = round(value / 240, 4)
+        else:
+            line_spacing_exact_pt = round(value / 20, 4)
+    first_line_chars = attr(indent, "w:firstLineChars")
+    return {
+        "alignment": attr(jc, "w:val"),
+        "lineSpacing": line_spacing,
+        "lineSpacingExactPt": line_spacing_exact_pt,
+        "lineRule": line_rule if line else None,
+        "spaceBeforePt": round(int(attr(spacing, "w:before")) / 20, 4)
+        if (attr(spacing, "w:before") or "").lstrip("-").isdigit()
+        else None,
+        "spaceAfterPt": round(int(attr(spacing, "w:after")) / 20, 4)
+        if (attr(spacing, "w:after") or "").lstrip("-").isdigit()
+        else None,
+        "leftIn": twips_to_inches(attr(indent, "w:left")),
+        "rightIn": twips_to_inches(attr(indent, "w:right")),
+        "firstLineIn": twips_to_inches(attr(indent, "w:firstLine")),
+        "hangingIn": twips_to_inches(attr(indent, "w:hanging")),
+        "firstLineChars": int(first_line_chars) / 100 if (first_line_chars or "").isdigit() else None,
+        "keepNext": toggle_on(direct_child(p_pr, "w:keepNext")),
+        "keepLines": toggle_on(direct_child(p_pr, "w:keepLines")),
+        "pageBreakBefore": toggle_on(direct_child(p_pr, "w:pageBreakBefore")),
+        "widowControl": toggle_on(direct_child(p_pr, "w:widowControl")),
+        "outlineLevel": int(attr(outline, "w:val")) if (attr(outline, "w:val") or "").isdigit() else None,
+    }
+
+
+def run_props(r_pr: Node | None) -> dict[str, Any]:
+    if r_pr is None:
+        return {}
+    r_fonts = direct_child(r_pr, "w:rFonts")
+    size = direct_child(r_pr, "w:sz")
+    return {
+        "latin": attr(r_fonts, "w:ascii") or attr(r_fonts, "w:hAnsi"),
+        "eastAsia": attr(r_fonts, "w:eastAsia"),
+        "complexScript": attr(r_fonts, "w:cs"),
+        "sizePt": half_points_to_points(attr(size, "w:val")),
+        "bold": toggle_on(direct_child(r_pr, "w:b")),
+        "italic": toggle_on(direct_child(r_pr, "w:i")),
+        "color": attr(direct_child(r_pr, "w:color"), "w:val"),
+    }
+
+
 def default_run_report(styles: minidom.Document | None) -> dict[str, Any] | None:
     if styles is None:
         return None
@@ -154,14 +221,19 @@ def default_run_report(styles: minidom.Document | None) -> dict[str, Any] | None
         return None
     doc_defaults = direct_child(roots[0], "w:docDefaults")
     r_pr = direct_child(direct_child(doc_defaults, "w:rPrDefault"), "w:rPr")
-    r_fonts = direct_child(r_pr, "w:rFonts")
-    size = direct_child(r_pr, "w:sz")
-    return {
-        "latin": attr(r_fonts, "w:ascii") or attr(r_fonts, "w:hAnsi"),
-        "eastAsia": attr(r_fonts, "w:eastAsia"),
-        "complexScript": attr(r_fonts, "w:cs"),
-        "sizePt": half_points_to_points(attr(size, "w:val")),
-    }
+    return run_props(r_pr) or None
+
+
+def default_paragraph_report(styles: minidom.Document | None) -> dict[str, Any] | None:
+    if styles is None:
+        return None
+    roots = styles.getElementsByTagName("w:styles")
+    if not roots:
+        return None
+    doc_defaults = direct_child(roots[0], "w:docDefaults")
+    p_pr = direct_child(direct_child(doc_defaults, "w:pPrDefault"), "w:pPr")
+    props = paragraph_props(p_pr)
+    return props or None
 
 
 def style_catalog(styles: minidom.Document | None) -> dict[str, Any]:
@@ -175,23 +247,24 @@ def style_catalog(styles: minidom.Document | None) -> dict[str, Any]:
         name = direct_child(style, "w:name")
         p_pr = direct_child(style, "w:pPr")
         r_pr = direct_child(style, "w:rPr")
-        r_fonts = direct_child(r_pr, "w:rFonts")
-        size = direct_child(r_pr, "w:sz")
-        num_pr = direct_child(p_pr, "w:numPr")
+        run = run_props(r_pr)
+        paragraph = paragraph_props(p_pr)
         out[style_id] = {
             "name": attr(name, "w:val"),
             "type": attr(style, "w:type"),
             "basedOn": attr(direct_child(style, "w:basedOn"), "w:val"),
             "next": attr(direct_child(style, "w:next"), "w:val"),
             "fonts": {
-                "latin": attr(r_fonts, "w:ascii") or attr(r_fonts, "w:hAnsi"),
-                "eastAsia": attr(r_fonts, "w:eastAsia"),
-                "complexScript": attr(r_fonts, "w:cs"),
+                "latin": run.get("latin"),
+                "eastAsia": run.get("eastAsia"),
+                "complexScript": run.get("complexScript"),
             },
-            "sizePt": half_points_to_points(attr(size, "w:val")),
-            "bold": direct_child(r_pr, "w:b") is not None,
-            "numbered": num_pr is not None,
-            "outlineLevel": attr(direct_child(p_pr, "w:outlineLvl"), "w:val"),
+            "sizePt": run.get("sizePt"),
+            "bold": bool(run.get("bold")),
+            "numbered": direct_child(p_pr, "w:numPr") is not None,
+            "outlineLevel": paragraph.get("outlineLevel"),
+            "run": run,
+            "paragraph": paragraph,
         }
     return out
 
@@ -397,6 +470,7 @@ def audit(path: Path) -> dict[str, Any]:
             **object_inventory(document),
         },
         "defaultRun": default_run_report(styles),
+        "defaultParagraph": default_paragraph_report(styles),
         "styles": style_catalog(styles),
         "sections": [
             section_report(section, index, relationships) for index, section in enumerate(sections)

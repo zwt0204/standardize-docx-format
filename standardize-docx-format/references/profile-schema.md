@@ -3,6 +3,7 @@
 ## 目录
 
 - [顶层结构](#顶层结构)
+- [文档语义结构](#文档语义结构)
 - [规范来源与安全门](#规范来源与安全门)
 - [页面与分节](#页面与分节)
 - [字体和样式](#字体和样式)
@@ -20,6 +21,7 @@
 ```json
 {
   "name": "标准名称",
+  "document": {},
   "requirements": {},
   "page": {},
   "sections": [],
@@ -39,6 +41,30 @@
 ```
 
 执行顺序：全局页面 → 逐节覆盖 → 样式/编号 → 语义段落 → 题注/书签 → 页眉页脚 → 文本替换 → 域 → 域刷新。
+
+## 文档语义结构
+
+`document` 把 Profile 从“格式配置”升级为 Document Spec。校验器、Diff 和语义 AST 用它判断论文结构是否完整：
+
+```json
+{
+  "document": {
+    "type": "thesis",
+    "sections": [
+      {"id": "cover", "required": true},
+      {"id": "abstract", "required": true, "languages": ["zh", "en"]},
+      {"id": "toc", "required": true},
+      {"id": "chapter", "required": true, "repeatable": true, "min": 1},
+      {"id": "references", "required": true},
+      {"id": "appendix", "required": false}
+    ]
+  }
+}
+```
+
+`id` 支持：`cover`、`declaration`、`abstract` / `abstract_zh` / `abstract_en`、`toc`、`list_of_figures`、`list_of_tables`、`chapter`、`references`、`acknowledgement`、`appendix`。
+
+没有 `document` 时，旧 Profile 仍然只做格式验收；有 `document` 时，`standardize.py diff` 会额外报告缺摘要、缺目录、缺章、缺参考文献等问题。
 
 ## 规范来源与安全门
 
@@ -354,3 +380,12 @@ python scripts/validate_docx.py --input output.docx --profile profile.json --out
 ```
 
 校验会同时核对 profile 中的分节页码和新建页眉页脚引用。脚本校验不能替代 Word 的最终分页、浮动对象和域结果渲染检查。
+
+v2 建议把结构验收和视觉验收分开：
+
+```powershell
+python scripts/standardize.py diff --input output.docx --profile profile.json --text
+python scripts/standardize.py visual --input output.docx --profile profile.json --html visual-report.html
+```
+
+完整流水线见 [v2-architecture.md](v2-architecture.md)。
