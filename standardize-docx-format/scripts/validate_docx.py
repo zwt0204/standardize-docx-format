@@ -13,6 +13,8 @@ from typing import Any
 from xml.dom import Node, minidom
 
 from audit_docx import audit
+from document_model import build_model, document_spec
+from profile_schema import ensure_profile
 
 
 def node_text(node: Node) -> str:
@@ -121,6 +123,42 @@ def validate_word_counts(
         add_check(checks, name, ok, {"mode": mode, "min": minimum, "max": maximum}, actual)
 
 
+def validate_document_spec(checks: list[dict[str, Any]], profile: dict[str, Any], input_path: Path) -> None:
+    spec = document_spec(profile)
+    if not spec.get("sections"):
+        return
+    summary = build_model(input_path, profile).get("summary") or {}
+    flags = {
+        "cover": "hasCover",
+        "declaration": "hasDeclaration",
+        "abstract": "hasAbstractZh",
+        "abstract_zh": "hasAbstractZh",
+        "abstract_en": "hasAbstractEn",
+        "toc": "hasToc",
+        "chapter": "chapterCount",
+        "references": "hasReferences",
+        "acknowledgement": "hasAcknowledgement",
+        "appendix": "hasAppendix",
+        "list_of_figures": "hasListOfFigures",
+        "list_of_tables": "hasListOfTables",
+    }
+    for item in spec.get("sections") or []:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        section_id = str(item["id"])
+        required = bool(item.get("required"))
+        key = flags.get(section_id)
+        if key == "chapterCount":
+            actual = int(summary.get("chapterCount") or 0)
+            minimum = int(item.get("min", 1 if required else 0))
+            add_check(checks, f"document.{section_id}", actual >= minimum, {"min": minimum}, actual)
+            continue
+        if key:
+            actual = bool(summary.get(key))
+            if required:
+                add_check(checks, f"document.{section_id}", actual, True, actual)
+
+
 def validate_profile_expectations(
     checks: list[dict[str, Any]], report: dict[str, Any], profile: dict[str, Any]
 ) -> None:
@@ -172,6 +210,7 @@ def validate_docx(input_path: Path, profile_path: Path) -> dict[str, Any]:
     profile = json.loads(profile_path.read_text(encoding="utf-8"))
     if not isinstance(profile, dict):
         raise ValueError("Profile root must be an object")
+    ensure_profile(profile)
     validation = profile.get("validation", {})
     if not isinstance(validation, dict):
         raise ValueError("validation must be an object")
@@ -215,6 +254,7 @@ def validate_docx(input_path: Path, profile_path: Path) -> dict[str, Any]:
         add_check(checks, f"requiredStylesUsed.{style}", actual > 0, ">0", actual)
 
     validate_profile_expectations(checks, report, profile)
+    validate_document_spec(checks, profile, input_path)
     ok = all(check["ok"] for check in checks)
     return {
         "ok": ok,

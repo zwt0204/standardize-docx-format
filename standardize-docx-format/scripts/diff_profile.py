@@ -32,12 +32,16 @@ FORMAT_MAP = {
 
 REGION_IDS = {
     "cover": "hasCover",
+    "declaration": "hasDeclaration",
     "abstract": "hasAbstractZh",
     "abstract_zh": "hasAbstractZh",
     "abstract_en": "hasAbstractEn",
     "toc": "hasToc",
+    "list_of_figures": "hasListOfFigures",
+    "list_of_tables": "hasListOfTables",
     "chapter": "chapterCount",
     "references": "hasReferences",
+    "acknowledgement": "hasAcknowledgement",
     "appendix": "hasAppendix",
 }
 

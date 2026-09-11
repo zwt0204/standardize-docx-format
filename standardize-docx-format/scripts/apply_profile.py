@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any
 from xml.dom import Node, minidom
 
+from profile_schema import ensure_profile
+
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
@@ -1210,10 +1212,10 @@ def apply_headers_footers(
         if action not in {"set", "clear", "inherit"}:
             raise ValueError("headersFooters.action must be set, clear, or inherit")
         section = sections[section_index]
-        remove_marginal_reference(section, kind, reference_type)
         if action == "inherit":
             report.append({"rule": index, "action": action})
             continue
+        remove_marginal_reference(section, kind, reference_type)
         part_name = next_marginal_part(parts, kind)
         root_tag = "w:hdr" if kind == "header" else "w:ftr"
         marginal = minidom.parseString(
@@ -1400,8 +1402,31 @@ def clear_paragraph_content(paragraph: Node) -> None:
             paragraph.removeChild(child)
 
 
+def caption_chapter_instruction(profile: dict[str, Any], rule: dict[str, Any]) -> str | None:
+    if rule.get("chapterFieldInstruction"):
+        return str(rule["chapterFieldInstruction"])
+    numbering = profile.get("captionNumbering") or {}
+    if not isinstance(numbering, dict):
+        return None
+    if numbering.get("chapterFieldInstruction"):
+        return str(numbering["chapterFieldInstruction"])
+    strategy = numbering.get("strategy")
+    style = numbering.get("chapterStyle") or "Heading 1"
+    if strategy == "styleref-as-displayed":
+        return f'STYLEREF "{style}" \\n'
+    if strategy == "styleref-arabic":
+        return f'STYLEREF "{style}" \\n \\* ARABIC'
+    if strategy == "seq-chapter":
+        return "SEQ chapter \\* ARABIC"
+    return None
+
+
 def apply_caption_rules(
-    document: minidom.Document, rules: list[Any], default_run: dict[str, Any], summary: dict[str, Any]
+    document: minidom.Document,
+    rules: list[Any],
+    default_run: dict[str, Any],
+    summary: dict[str, Any],
+    profile: dict[str, Any] | None = None,
 ) -> None:
     if not rules:
         return
@@ -1410,6 +1435,9 @@ def apply_caption_rules(
     infos = paragraph_infos(document)
     report: list[dict[str, Any]] = []
     bookmark_id = next_bookmark_id(document)
+    profile = profile or {}
+    numbering = profile.get("captionNumbering") or {}
+    default_separator = numbering.get("separator") if isinstance(numbering, dict) else None
     for rule_index, rule in enumerate(rules):
         if not isinstance(rule, dict) or "label" not in rule:
             raise ValueError("Each captionRules item needs label")
@@ -1429,11 +1457,11 @@ def apply_caption_rules(
             run_config = {**default_run, **rule.get("run", {})}
             label = str(rule["label"])
             paragraph.appendChild(create_text_run(document, label, run_config))
-            chapter_instruction = rule.get("chapterFieldInstruction")
+            chapter_instruction = caption_chapter_instruction(profile, rule)
             if chapter_instruction:
                 for node in create_field_runs(document, str(chapter_instruction), str(rule.get("chapterResult", "1")), run_config):
                     paragraph.appendChild(node)
-                paragraph.appendChild(create_text_run(document, str(rule.get("separator", "-")), run_config))
+                paragraph.appendChild(create_text_run(document, str(rule.get("separator", default_separator or "-")), run_config))
             sequence = str(rule.get("sequence", label))
             sequence_instruction = str(rule.get("sequenceInstruction", f"SEQ {sequence} \\* ARABIC"))
             for node in create_field_runs(document, sequence_instruction, str(rule.get("sequenceResult", occurrence)), run_config):
@@ -1503,13 +1531,27 @@ def write_package(
 
 
 def apply_profile(
-    input_path: Path, output_path: Path, profile_path: Path, force: bool, allow_unresolved: bool = False
+    input_path: Path,
+    output_path: Path,
+    profile_path: Path | None,
+    force: bool,
+    allow_unresolved: bool = False,
+    *,
+    profile_data: dict[str, Any] | None = None,
+    skip_schema: bool = False,
 ) -> dict[str, Any]:
     if input_path.resolve() == output_path.resolve():
         raise ValueError("Refusing in-place write: input and output paths are identical")
-    profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    if profile_data is not None:
+        profile = profile_data
+    elif profile_path is not None:
+        profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    else:
+        raise ValueError("A profile path or profile_data object is required")
     if not isinstance(profile, dict):
         raise ValueError("Profile root must be an object")
+    if not skip_schema:
+        ensure_profile(profile)
     check_requirements_metadata(profile, allow_unresolved)
 
     with zipfile.ZipFile(input_path, "r") as archive:
@@ -1535,7 +1577,7 @@ def apply_profile(
     apply_page_numbers(document, profile.get("pageNumbers", []), summary)
     style_names = style_id_to_name(parts)
     apply_paragraph_rules(document, profile.get("paragraphRules", []), default_run, summary, style_names=style_names)
-    apply_caption_rules(document, profile.get("captionRules", []), default_run, summary)
+    apply_caption_rules(document, profile.get("captionRules", []), default_run, summary, profile)
     apply_bookmark_rules(document, profile.get("bookmarkRules", []), summary)
     apply_headers_footers(parts, document, profile.get("headersFooters", []), summary)
     parts["word/document.xml"] = xml_bytes(document)
@@ -1554,7 +1596,73 @@ def apply_profile(
     write_package(source_infos, parts, output_path, force)
     summary["ok"] = True
     summary["output"] = str(output_path.resolve())
+    if profile.get("captionNumbering"):
+        summary["captionNumbering"] = profile.get("captionNumbering")
     return summary
+
+
+def parse_id_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def apply_with_optional_plan(
+    input_path: Path,
+    output_path: Path,
+    profile_path: Path,
+    force: bool,
+    allow_unresolved: bool,
+    plan_path: Path | None = None,
+    only_ids: list[str] | None = None,
+    skip_ids: list[str] | None = None,
+    only_auto: bool = False,
+    include_page_breaks: bool = False,
+    confirmed: bool = False,
+) -> dict[str, Any]:
+    from plan_apply import filter_profile_for_steps, select_steps, visual_issues_from_steps
+    from visual_repair import apply_visual_repairs
+
+    profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    selected_steps: list[dict[str, Any]] = []
+    if plan_path is not None:
+        if not confirmed:
+            raise ValueError("Applying a repair plan requires --yes after the user confirms the selected steps")
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        if not isinstance(plan, dict) or not isinstance(plan.get("repairPlan"), list):
+            raise ValueError("Repair plan JSON must contain a repairPlan array")
+        selected_steps = select_steps(
+            plan,
+            only_ids=only_ids,
+            skip_ids=skip_ids,
+            only_auto=only_auto,
+            include_page_breaks=include_page_breaks,
+        )
+        if not selected_steps:
+            raise ValueError("No repair-plan steps selected; pass --only-auto, --only-ids, or confirm the full auto set")
+        profile = filter_profile_for_steps(profile, selected_steps)
+        # A confirmed plan is a scoped mutation; leftover unresolved clauses
+        # that were not selected must not block the chosen steps.
+        allow_unresolved = True
+
+    result = apply_profile(
+        input_path,
+        output_path,
+        profile_path,
+        force,
+        allow_unresolved,
+        profile_data=profile,
+    )
+    visual_issues = visual_issues_from_steps(selected_steps)
+    if visual_issues:
+        visual_output = output_path.with_name(output_path.stem + ".visual.docx")
+        visual_result = apply_visual_repairs(output_path, visual_output, visual_issues, force=True)
+        result["visualRepair"] = visual_result
+        result["output"] = visual_result["output"]
+    if selected_steps:
+        result["appliedStepIds"] = [step.get("id") for step in selected_steps]
+        result["appliedStepCount"] = len(selected_steps)
+    return result
 
 
 def main() -> int:
@@ -1568,12 +1676,30 @@ def main() -> int:
         action="store_true",
         help="Apply even when profile requirements list unresolved items or conflicts",
     )
+    parser.add_argument("--plan", type=Path, help="Confirmed repair-plan JSON; apply only selected steps")
+    parser.add_argument("--only-ids", help="Comma-separated repair step ids to apply")
+    parser.add_argument("--skip-ids", help="Comma-separated repair step ids to skip")
+    parser.add_argument("--only-auto", action="store_true", help="Apply only auto-applyable plan steps")
+    parser.add_argument("--include-page-breaks", action="store_true", help="Allow set_page_break_before steps")
+    parser.add_argument("--yes", action="store_true", help="Confirm applying a repair plan")
     args = parser.parse_args()
     try:
         for path, label in ((args.input, "input"), (args.profile, "profile")):
             if not path.is_file():
                 raise FileNotFoundError(f"Missing {label}: {path}")
-        result = apply_profile(args.input, args.output, args.profile, args.force, args.allow_unresolved)
+        result = apply_with_optional_plan(
+            args.input,
+            args.output,
+            args.profile,
+            args.force,
+            args.allow_unresolved,
+            plan_path=args.plan,
+            only_ids=parse_id_list(args.only_ids),
+            skip_ids=parse_id_list(args.skip_ids),
+            only_auto=args.only_auto,
+            include_page_breaks=args.include_page_breaks,
+            confirmed=args.yes,
+        )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except Exception as exc:

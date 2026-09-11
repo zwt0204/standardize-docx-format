@@ -1,5 +1,13 @@
 {
   "name": "广州南方学院成人本科毕业论文模板 v2 草案",
+  "profileVersion": "2.1",
+  "captionNumbering": {
+    "chapterStyle": "Heading 1",
+    "headingDisplay": "chinese-counting",
+    "chapterDisplay": "decimal",
+    "separator": "-",
+    "strategy": "needs-confirmation"
+  },
   "requirements": {
     "sourceType": "reference-template",
     "sources": [

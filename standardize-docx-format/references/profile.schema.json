@@ -1,0 +1,385 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/zwt0204/standardize-docx-format/references/profile.schema.json",
+  "title": "standardize-docx-format Profile v2.1",
+  "description": "Deterministic DOCX formatting profile. LLM-authored drafts must validate before apply.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "name": { "type": "string", "minLength": 1 },
+    "profileVersion": { "type": "string" },
+    "document": { "$ref": "#/$defs/documentSpec" },
+    "requirements": { "$ref": "#/$defs/requirements" },
+    "page": { "$ref": "#/$defs/page" },
+    "sections": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sectionConfig" }
+    },
+    "defaultRun": { "$ref": "#/$defs/run" },
+    "styles": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/style" }
+    },
+    "headingNumbering": { "$ref": "#/$defs/headingNumbering" },
+    "captionNumbering": { "$ref": "#/$defs/captionNumbering" },
+    "pageNumbers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pageNumber" }
+    },
+    "paragraphRules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/paragraphRule" }
+    },
+    "captionRules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/captionRule" }
+    },
+    "bookmarkRules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/bookmarkRule" }
+    },
+    "headersFooters": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/headerFooter" }
+    },
+    "replacements": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/replacement" }
+    },
+    "fieldRules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/fieldRule" }
+    },
+    "fields": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "updateOnOpen": { "type": "boolean" }
+      }
+    },
+    "validation": { "$ref": "#/$defs/validation" }
+  },
+  "$defs": {
+    "documentSpec": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["thesis", "course-paper", "technical-report", "journal", "other"]
+        },
+        "sections": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/documentSection" }
+        }
+      }
+    },
+    "documentSection": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": [
+            "cover", "declaration", "abstract", "abstract_zh", "abstract_en",
+            "toc", "list_of_figures", "list_of_tables", "chapter",
+            "references", "acknowledgement", "appendix"
+          ]
+        },
+        "required": { "type": "boolean" },
+        "repeatable": { "type": "boolean" },
+        "min": { "type": "integer", "minimum": 0 },
+        "languages": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "requirements": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "sourceType": {
+          "type": "string",
+          "enum": ["description", "template", "reference-template", "profile", "mixed"]
+        },
+        "sources": { "type": "array", "items": { "type": "string" } },
+        "unresolved": { "type": "array", "items": { "type": "string" } },
+        "conflicts": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "size": { "type": "string", "enum": ["a3", "a4", "a5", "letter", "legal", "tabloid"] },
+        "orientation": { "type": "string", "enum": ["portrait", "landscape"] },
+        "widthIn": { "type": "number" },
+        "heightIn": { "type": "number" },
+        "marginsIn": { "$ref": "#/$defs/margins" }
+      }
+    },
+    "margins": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "top": { "type": "number" },
+        "right": { "type": "number" },
+        "bottom": { "type": "number" },
+        "left": { "type": "number" },
+        "header": { "type": "number" },
+        "footer": { "type": "number" },
+        "gutter": { "type": "number" }
+      }
+    },
+    "sectionConfig": {
+      "type": "object",
+      "required": ["section"],
+      "additionalProperties": true,
+      "properties": {
+        "section": { "type": "integer", "minimum": 0 },
+        "type": { "type": "string", "enum": ["nextPage", "continuous", "evenPage", "oddPage", "nextColumn"] },
+        "differentFirstPage": { "type": "boolean" },
+        "page": { "$ref": "#/$defs/page" }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "latinFont": { "type": "string" },
+        "eastAsiaFont": { "type": "string" },
+        "complexScriptFont": { "type": "string" },
+        "sizePt": { "type": "number" },
+        "bold": { "type": "boolean" },
+        "italic": { "type": "boolean" },
+        "color": { "type": "string" },
+        "updateTheme": { "type": "boolean" }
+      }
+    },
+    "paragraph": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "alignment": { "type": "string", "enum": ["left", "center", "right", "justify", "both", "distribute"] },
+        "lineSpacing": { "type": "number" },
+        "lineSpacingExactPt": { "type": "number" },
+        "spaceBeforePt": { "type": "number" },
+        "spaceAfterPt": { "type": "number" },
+        "leftIn": { "type": "number" },
+        "rightIn": { "type": "number" },
+        "firstLineIn": { "type": "number" },
+        "hangingIn": { "type": "number" },
+        "firstLineChars": { "type": "number" },
+        "keepNext": { "type": "boolean" },
+        "keepLines": { "type": "boolean" },
+        "pageBreakBefore": { "type": "boolean" },
+        "widowControl": { "type": "boolean" },
+        "outlineLevel": { "type": "integer", "minimum": 0, "maximum": 8 }
+      }
+    },
+    "style": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "basedOn": { "type": "string" },
+        "next": { "type": "string" },
+        "run": { "$ref": "#/$defs/run" },
+        "paragraph": { "$ref": "#/$defs/paragraph" }
+      }
+    },
+    "headingNumbering": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "styles": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 9 },
+        "patterns": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 9 },
+        "formats": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 9 },
+        "starts": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "minItems": 1, "maxItems": 9 },
+        "suffix": { "type": "string", "enum": ["space", "tab", "nothing"] }
+      }
+    },
+    "captionNumbering": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "chapterStyle": { "type": "string" },
+        "headingDisplay": { "type": "string" },
+        "chapterDisplay": { "type": "string", "enum": ["decimal", "as-displayed", "chinese-counting"] },
+        "separator": { "type": "string" },
+        "strategy": {
+          "type": "string",
+          "enum": ["styleref-as-displayed", "styleref-arabic", "seq-chapter", "needs-confirmation"]
+        },
+        "chapterFieldInstruction": { "type": "string" }
+      }
+    },
+    "pageNumber": {
+      "type": "object",
+      "required": ["section"],
+      "additionalProperties": true,
+      "properties": {
+        "section": { "type": "integer", "minimum": 0 },
+        "format": {
+          "type": "string",
+          "enum": ["decimal", "lower-roman", "upper-roman", "lower-alpha", "upper-alpha"]
+        },
+        "start": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "textEquals": { "type": "string" },
+        "textContains": { "type": "string" },
+        "startsWith": { "type": "string" },
+        "textRegex": { "type": "string" },
+        "textNotRegex": { "type": "string" },
+        "currentStyle": { "type": "string" },
+        "currentStyleNotIn": {
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ]
+        },
+        "styleNameRegex": { "type": "string" },
+        "styleNameNotRegex": { "type": "string" },
+        "section": { "type": "integer" },
+        "paragraphIndex": { "type": "integer" },
+        "inTable": { "type": "boolean" },
+        "inTextBox": { "type": "boolean" },
+        "normalizeWhitespace": { "type": "boolean" }
+      }
+    },
+    "paragraphRule": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "match": { "$ref": "#/$defs/match" },
+        "style": { "type": "string" },
+        "paragraph": { "$ref": "#/$defs/paragraph" },
+        "run": { "$ref": "#/$defs/run" },
+        "clearParagraphFormatting": { "type": "boolean" },
+        "clearRunFormatting": { "type": "boolean" },
+        "textRegexReplace": {
+          "type": "object",
+          "required": ["pattern"],
+          "properties": {
+            "pattern": { "type": "string" },
+            "replacement": { "type": "string" }
+          }
+        },
+        "remove": { "type": "boolean" },
+        "required": { "type": "boolean" },
+        "maxMatches": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "captionRule": {
+      "type": "object",
+      "required": ["label"],
+      "additionalProperties": true,
+      "properties": {
+        "label": { "type": "string" },
+        "sequence": { "type": "string" },
+        "match": { "$ref": "#/$defs/match" },
+        "stripPattern": { "type": "string" },
+        "style": { "type": "string" },
+        "run": { "$ref": "#/$defs/run" },
+        "chapterFieldInstruction": { "type": "string" },
+        "chapterResult": { "type": "string" },
+        "separator": { "type": "string" },
+        "sequenceInstruction": { "type": "string" },
+        "sequenceResult": {},
+        "afterNumber": { "type": "string" },
+        "bookmarkPrefix": { "type": "string" },
+        "required": { "type": "boolean" }
+      }
+    },
+    "bookmarkRule": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "match": { "$ref": "#/$defs/match" },
+        "maxMatches": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "headerFooter": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "section": { "type": "integer", "minimum": 0 },
+        "kind": { "type": "string", "enum": ["header", "footer"] },
+        "type": { "type": "string", "enum": ["default", "first", "even"] },
+        "action": { "type": "string", "enum": ["set", "clear", "inherit"] },
+        "note": { "type": "string" },
+        "paragraphs": { "type": "array", "items": { "type": "object" } },
+        "text": { "type": "string" },
+        "alignment": { "type": "string" },
+        "run": { "$ref": "#/$defs/run" },
+        "segments": { "type": "array" },
+        "bottomBorder": { "type": "object" }
+      }
+    },
+    "replacement": {
+      "type": "object",
+      "required": ["find"],
+      "additionalProperties": true,
+      "properties": {
+        "find": { "type": "string" },
+        "replace": { "type": "string" },
+        "parts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "occurrence": {},
+        "required": { "type": "boolean" },
+        "regex": { "type": "boolean" }
+      }
+    },
+    "fieldRule": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "placeholder": { "type": "string" },
+        "instruction": { "type": "string" },
+        "result": { "type": "string" },
+        "required": { "type": "boolean" },
+        "parts": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "sectionCount": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            {
+              "type": "object",
+              "properties": {
+                "min": { "type": "integer" },
+                "max": { "type": "integer" }
+              }
+            }
+          ]
+        },
+        "requiredTexts": { "type": "array" },
+        "forbiddenTexts": { "type": "array" },
+        "noPlaceholders": { "type": "array", "items": { "type": "string" } },
+        "requiredFields": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "requiredBookmarks": { "type": "array", "items": { "type": "string" } },
+        "requiredStylesUsed": { "type": "array", "items": { "type": "string" } },
+        "wordCounts": { "type": "array", "items": { "type": "object" } }
+      }
+    }
+  }
+}

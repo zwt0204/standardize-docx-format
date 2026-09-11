@@ -1,4 +1,6 @@
-# DOCX 标准化 Profile v2
+# DOCX 标准化 Profile v2.1
+
+机器可读 Schema：[`profile.schema.json`](profile.schema.json)。`compile`、`analyze-template`、`apply`、`validate` 都会用标准库校验器检查这份 Schema。
 
 ## 目录
 
@@ -335,6 +337,29 @@ TOC / 目录保护建议：
 ```
 
 如果学校的一级标题使用中文序号但图表要求阿拉伯章号，应在 `requirements.unresolved` 中记录并选择专门的章号字段策略，不能假定 STYLEREF 的显示一定符合要求。
+
+章号策略现在是一等字段 `captionNumbering`：
+
+```json
+{
+  "captionNumbering": {
+    "chapterStyle": "Heading 1",
+    "headingDisplay": "chinese-counting",
+    "chapterDisplay": "decimal",
+    "separator": "-",
+    "strategy": "styleref-arabic"
+  }
+}
+```
+
+`strategy`：
+
+- `styleref-as-displayed`：题注章号与标题编号显示一致
+- `styleref-arabic`：标题可为中文序号，题注章号强制阿拉伯数字（`STYLEREF ... \\n \\* ARABIC`）
+- `seq-chapter`：使用独立 `SEQ chapter`
+- `needs-confirmation`：必须留在 `requirements.unresolved`，默认拒绝 apply
+
+`captionRules` 未写 `chapterFieldInstruction` 时，会使用 `captionNumbering`。
 
 ## 验收规则
 

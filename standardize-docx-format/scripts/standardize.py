@@ -10,11 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from analyze_template import analyze_template
-from apply_profile import apply_profile
+from apply_profile import apply_with_optional_plan, parse_id_list
 from audit_docx import audit
 from compile_requirements import compile_text, read_source
 from diff_profile import diff_document, render_text as render_diff
 from document_model import build_model
+from profile_schema import validate_profile
 from repair_plan import build_repair_plan, render_text as render_plan
 from report import write_compliance_report
 from validate_docx import validate_docx
@@ -80,8 +81,27 @@ def command_plan(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def command_apply(args: argparse.Namespace) -> dict[str, Any]:
-    result = apply_profile(args.input, args.output, args.profile, args.force, args.allow_unresolved)
-    return result
+    return apply_with_optional_plan(
+        args.input,
+        args.output,
+        args.profile,
+        args.force,
+        args.allow_unresolved,
+        plan_path=getattr(args, "plan", None),
+        only_ids=parse_id_list(getattr(args, "only_ids", None)),
+        skip_ids=parse_id_list(getattr(args, "skip_ids", None)),
+        only_auto=bool(getattr(args, "only_auto", False)),
+        include_page_breaks=bool(getattr(args, "include_page_breaks", False)),
+        confirmed=bool(getattr(args, "yes", False)),
+    )
+
+
+def command_schema(args: argparse.Namespace) -> dict[str, Any]:
+    profile = load_json(args.input)
+    errors = validate_profile(profile)
+    payload = {"ok": not errors, "input": str(args.input.resolve()), "errors": errors}
+    dump(args.output, payload)
+    return payload
 
 
 def command_validate(args: argparse.Namespace) -> dict[str, Any]:
@@ -146,10 +166,24 @@ def command_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             raise ValueError("pipeline --apply requires --output for the standardized DOCX")
         if not args.yes:
             raise ValueError("Refusing to apply without --yes after reviewing the repair plan")
-        applied = apply_profile(args.input, output_docx, args.profile, args.force, args.allow_unresolved)
+        plan_path = work / "repair-plan.json"
+        applied = apply_with_optional_plan(
+            args.input,
+            output_docx,
+            args.profile,
+            args.force,
+            args.allow_unresolved,
+            plan_path=plan_path if args.plan_apply else None,
+            only_ids=parse_id_list(args.only_ids),
+            skip_ids=parse_id_list(args.skip_ids),
+            only_auto=args.only_auto,
+            include_page_breaks=args.include_page_breaks,
+            confirmed=True,
+        )
         dump(work / "apply.json", applied)
-        current = output_docx
-        if args.visual_repair:
+        current = Path(applied.get("output") or output_docx)
+        output_docx = current
+        if args.visual_repair and not applied.get("visualRepair"):
             repaired_path = output_docx.with_name(output_docx.stem + ".visual.docx")
             visual_applied = apply_visual_repairs(output_docx, repaired_path, visual_qa(output_docx, profile, None).get("issues") or [], True)
             dump(work / "visual-repair.json", visual_applied)
@@ -166,7 +200,8 @@ def command_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         dump(work / "visual.json", visual)
         write_html_report(visual, work / "visual-report.html")
 
-    write_compliance_report(work / "report.html", diff, visual, plan, validation)
+    compliance = write_compliance_report(work / "report.html", diff, visual, plan, validation)
+    dump(work / "compliance.json", compliance)
     report = {
         "ok": bool(diff.get("ok")) and (validation is None or validation.get("ok")) and (visual is None or visual.get("ok")),
         "input": str(args.input.resolve()),
@@ -187,6 +222,8 @@ def command_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         else None,
         "applied": bool(applied),
         "visualRepaired": bool(visual_applied),
+        "mustReview": compliance.get("mustReview"),
+        "estimatedVisual": compliance.get("estimated"),
     }
     dump(work / "pipeline-report.json", report)
     return report
@@ -221,7 +258,18 @@ def build_parser() -> argparse.ArgumentParser:
     apply_p.add_argument("--profile", required=True, type=Path)
     apply_p.add_argument("--force", action="store_true")
     apply_p.add_argument("--allow-unresolved", action="store_true")
+    apply_p.add_argument("--plan", type=Path, help="Confirmed repair-plan JSON")
+    apply_p.add_argument("--only-ids", help="Comma-separated repair step ids")
+    apply_p.add_argument("--skip-ids", help="Comma-separated repair step ids to skip")
+    apply_p.add_argument("--only-auto", action="store_true")
+    apply_p.add_argument("--include-page-breaks", action="store_true")
+    apply_p.add_argument("--yes", action="store_true", help="Confirm applying a repair plan")
     apply_p.set_defaults(func=command_apply)
+
+    schema_p = sub.add_parser("schema", help="Validate a profile against profile.schema.json")
+    schema_p.add_argument("--input", required=True, type=Path)
+    schema_p.add_argument("--output", type=Path)
+    schema_p.set_defaults(func=command_schema)
 
     validate_p = sub.add_parser("validate", help="Structural validation against a profile")
     add_io(validate_p, "DOCX to validate", profile=True)
@@ -262,6 +310,11 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_p.add_argument("--allow-unresolved", action="store_true")
     pipeline_p.add_argument("--render", action="store_true")
     pipeline_p.add_argument("--visual-repair", action="store_true", help="After apply, also run conservative visual repairs")
+    pipeline_p.add_argument("--plan-apply", action="store_true", help="Apply only selected repair-plan steps instead of the full profile")
+    pipeline_p.add_argument("--only-ids", help="Comma-separated repair step ids when using --plan-apply")
+    pipeline_p.add_argument("--skip-ids", help="Comma-separated repair step ids to skip")
+    pipeline_p.add_argument("--only-auto", action="store_true", help="With --plan-apply, apply only auto-applyable steps")
+    pipeline_p.add_argument("--include-page-breaks", action="store_true")
     pipeline_p.set_defaults(func=command_pipeline)
     return parser
 
@@ -292,6 +345,9 @@ def main() -> int:
             "conflicts",
             "appliedCount",
             "visualRepaired",
+            "errors",
+            "appliedStepIds",
+            "appliedStepCount",
         )
         public = {key: result[key] for key in public_keys if key in result}
         if isinstance(public.get("profile"), dict):

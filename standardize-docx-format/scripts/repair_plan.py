@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from diff_profile import diff_document
+from plan_apply import annotate_steps, is_auto_applyable, needs_confirmation
 from visual_qa import visual_qa
 
 
@@ -31,7 +32,7 @@ def action_for(finding: dict[str, Any]) -> str:
     category = str(finding.get("category") or "")
     if name.startswith("defaultRun"):
         return "set_default_run"
-    if name.startswith("styles."):
+    if name.startswith("styles.") or (category in {"paragraph", "run"} and "styles." in name):
         return "set_style"
     return ACTION_HINTS.get(category, "inspect")
 
@@ -79,16 +80,20 @@ def visual_step(issue: dict[str, Any]) -> dict[str, Any]:
         "source": issue_type,
         "page": issue.get("page"),
         "paragraphIndex": issue.get("paragraphIndex"),
+        "contentWidthIn": issue.get("contentWidthIn"),
+        "widthIn": issue.get("widthIn"),
         "visual": True,
+        "reversible": action != "inspect",
     }
 
 
 def build_repair_plan(diff: dict[str, Any], visual: dict[str, Any] | None = None) -> dict[str, Any]:
     steps: list[dict[str, Any]] = []
     for finding in diff.get("failed") or []:
+        action = action_for(finding)
         steps.append(
             {
-                "action": action_for(finding),
+                "action": action,
                 "target": target_for(finding),
                 "property": property_for(finding),
                 "from": finding.get("actual"),
@@ -97,32 +102,17 @@ def build_repair_plan(diff: dict[str, Any], visual: dict[str, Any] | None = None
                 "severity": finding.get("severity") or "error",
                 "suggestion": finding.get("suggestion"),
                 "source": finding.get("name"),
+                "visual": False,
+                "reversible": action not in {"map_structure", "inspect"},
             }
         )
     for issue in (visual or {}).get("issues") or []:
         if issue.get("severity") == "info" and issue.get("type") == "chapter_midpage":
             continue
         steps.append(visual_step(issue))
-    auto_applyable = [
-        step
-        for step in steps
-        if step["action"]
-        in {
-            "set_default_run",
-            "set_style",
-            "set_page",
-            "set_page_number",
-            "set_header_footer",
-            "set_keep_next",
-            "scale_drawing",
-        }
-        and step["property"] != "exists"
-    ]
-    needs_confirmation = [
-        step
-        for step in steps
-        if step["action"] in {"map_structure", "inspect", "set_page_break_before"} or step["property"] == "exists"
-    ]
+    steps = annotate_steps(steps)
+    auto_steps = [step for step in steps if is_auto_applyable(step)]
+    confirm_steps = [step for step in steps if needs_confirmation(step)]
     return {
         "ok": not steps,
         "input": diff.get("input"),
@@ -130,18 +120,18 @@ def build_repair_plan(diff: dict[str, Any], visual: dict[str, Any] | None = None
         "compliancePercent": diff.get("compliancePercent"),
         "categoryScores": diff.get("categoryScores"),
         "repairPlan": steps,
-        "autoApplyable": len(auto_applyable),
-        "needsConfirmation": needs_confirmation,
+        "autoApplyable": len(auto_steps),
+        "needsConfirmation": confirm_steps,
         "visualIssueCount": len((visual or {}).get("issues") or []),
         "summary": {
             "failed": len(steps),
-            "autoApplyable": len(auto_applyable),
-            "needsConfirmation": len(needs_confirmation),
+            "autoApplyable": len(auto_steps),
+            "needsConfirmation": len(confirm_steps),
             "visualIssues": len((visual or {}).get("issues") or []),
         },
         "notes": [
-            "Repair plans are explanations, not silent mutations.",
-            "Run apply only after the user confirms the plan.",
+            "Each step has a stable id. Apply with --plan and --yes, optionally --only-ids / --only-auto.",
+            "map_structure and pageBreakBefore never run unless their ids are listed in --only-ids.",
             "Visual keepNext/scale_drawing steps are conservative; pageBreakBefore still needs confirmation.",
             "Structural gaps still need paragraphRules or a template, not blind OOXML edits.",
         ],
@@ -158,7 +148,16 @@ def render_text(plan: dict[str, Any]) -> str:
         "",
     ]
     for index, step in enumerate(plan.get("repairPlan") or [], start=1):
-        lines.append(f"{index}. {step['action']}  {step['target']}.{step['property']}")
+        identifier = step.get("id") or index
+        flags = []
+        if step.get("autoApplyable"):
+            flags.append("auto")
+        if step.get("needsConfirmation"):
+            flags.append("confirm")
+        if step.get("visual"):
+            flags.append("visual")
+        suffix = f" [{' '.join(flags)}]" if flags else ""
+        lines.append(f"{index}. [{identifier}] {step['action']}  {step['target']}.{step['property']}{suffix}")
         lines.append(f"   from: {step['from']}")
         lines.append(f"   to:   {step['to']}")
         if step.get("affected"):

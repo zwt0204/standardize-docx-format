@@ -6,10 +6,14 @@ from __future__ import annotations
 import zipfile
 from pathlib import Path
 
+from analyze_template import analyze_template
+from apply_profile import apply_profile, apply_with_optional_plan
 from compile_requirements import compile_text
 from diff_profile import diff_document
 from document_model import build_model
 from layout_estimate import detect_pagination_issues, paginate
+from plan_apply import filter_profile_for_steps, select_steps
+from profile_schema import validate_profile
 from repair_plan import build_repair_plan
 from visual_qa import visual_qa
 from visual_repair import apply_visual_repairs
@@ -106,12 +110,69 @@ def write_docx(path: Path) -> None:
   <Relationship Id="rId1" Type="{OFFICE_REL}/styles" Target="styles.xml"/>
 </Relationships>
 """
+    numbering = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="{W}">
+  <w:abstractNum w:abstractNumId="0">
+    <w:lvl w:ilvl="0">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="chineseCounting"/>
+      <w:pStyle w:val="Heading1"/>
+      <w:lvlText w:val="%1、"/>
+      <w:suff w:val="space"/>
+    </w:lvl>
+    <w:lvl w:ilvl="1">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="chineseCounting"/>
+      <w:pStyle w:val="Heading2"/>
+      <w:lvlText w:val="（%2）"/>
+      <w:suff w:val="space"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:num w:numId="1">
+    <w:abstractNumId w:val="0"/>
+  </w:num>
+</w:numbering>
+"""
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("[Content_Types].xml", content_types)
         archive.writestr("_rels/.rels", rels)
         archive.writestr("word/document.xml", document)
         archive.writestr("word/styles.xml", styles)
         archive.writestr("word/_rels/document.xml.rels", document_rels)
+        archive.writestr("word/numbering.xml", numbering)
+
+
+def write_template_docx(path: Path) -> None:
+    write_docx(path)
+    with zipfile.ZipFile(path, "r") as archive:
+        infos = archive.infolist()
+        parts = {info.filename: archive.read(info.filename) for info in infos}
+    document = parts["word/document.xml"].decode("utf-8").replace(
+        "<w:p><w:r><w:t>本科毕业论文</w:t></w:r></w:p>",
+        "<w:p><w:r><w:t>{{THESIS_TITLE}}</w:t></w:r></w:p>"
+        '<w:p><w:r><w:instrText xml:space="preserve"> TOC \\o "1-3" \\h \\u </w:instrText></w:r></w:p>',
+    )
+    styles = parts["word/styles.xml"].decode("utf-8")
+    if '<w:style w:type="paragraph" w:styleId="Heading2">' not in styles:
+        styles = styles.replace(
+            "</w:styles>",
+            """  <w:style w:type="paragraph" w:styleId="Heading2">
+    <w:name w:val="heading 2"/>
+    <w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="1"/></w:numPr></w:pPr>
+  </w:style>
+</w:styles>""",
+            1,
+        )
+    styles = styles.replace(
+        '<w:style w:type="paragraph" w:styleId="Heading1">',
+        '<w:style w:type="paragraph" w:styleId="Heading1"><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>',
+        1,
+    )
+    parts["word/document.xml"] = document.encode("utf-8")
+    parts["word/styles.xml"] = styles.encode("utf-8")
+    with zipfile.ZipFile(path, "w") as archive:
+        for info in infos:
+            archive.writestr(info, parts[info.filename])
 
 
 def test_compile_requirements() -> None:
@@ -122,6 +183,10 @@ def test_compile_requirements() -> None:
     一级标题黑体三号。
     二级标题黑体四号。
     封面填写线长度适当。
+    前置部分使用罗马页码，正文页码从 1 开始用阿拉伯数字。
+    页眉为“示例大学本科毕业论文”，页脚居中页码。
+    自动目录包含到二级标题。
+    图题按章编号，如 1-1。
     """
     result = compile_text(spec, "fixture.txt")
     profile = result["profile"]
@@ -133,6 +198,11 @@ def test_compile_requirements() -> None:
     assert profile["styles"]["Normal"]["paragraph"]["lineSpacing"] == 1.5
     assert any("不可量化" in item for item in result["unresolved"])
     assert profile["document"]["type"] == "thesis"
+    assert profile["pageNumbers"][0]["format"] == "upper-roman"
+    assert any(item["kind"] == "header" for item in profile["headersFooters"])
+    assert profile["validation"]["requiredFields"]["PAGE"] == 1
+    assert profile["validation"]["requiredFields"]["TOC"] == 1
+    assert not validate_profile(profile)
 
 
 def test_model_diff_visual(tmp_path: Path) -> None:
@@ -228,6 +298,152 @@ def test_pagination_estimate() -> None:
     assert "figure_caption_split" in types
 
 
+def test_schema_examples() -> None:
+    root = Path(__file__).resolve().parents[1] / "references"
+    for name in ("thesis-cn.example.json", "guangzhou-nanfang-thesis.example.json"):
+        profile = __import__("json").loads((root / name).read_text(encoding="utf-8"))
+        errors = validate_profile(profile)
+        assert not errors, (name, errors)
+
+
+def test_plan_apply_filter() -> None:
+    plan = {
+        "repairPlan": [
+            {
+                "id": "s001-defaultRun.eastAsiaFont",
+                "action": "set_default_run",
+                "target": "defaultRun",
+                "property": "eastAsiaFont",
+                "source": "defaultRun.eastAsiaFont",
+                "autoApplyable": True,
+                "needsConfirmation": False,
+            },
+            {
+                "id": "s002-document.abstract",
+                "action": "map_structure",
+                "target": "structure",
+                "property": "abstract",
+                "source": "document.sections[0].abstract",
+                "autoApplyable": False,
+                "needsConfirmation": True,
+            },
+            {
+                "id": "s003-image",
+                "action": "scale_drawing",
+                "target": "paragraph[9]",
+                "property": "image_overflow",
+                "source": "image_overflow",
+                "visual": True,
+                "autoApplyable": True,
+                "paragraphIndex": 9,
+                "contentWidthIn": 6.0,
+            },
+        ]
+    }
+    selected = select_steps(plan, only_auto=True)
+    ids = [step["id"] for step in selected]
+    assert "s001-defaultRun.eastAsiaFont" in ids
+    assert "s002-document.abstract" not in ids
+    assert "s003-image" in ids
+    profile = {
+        "name": "x",
+        "defaultRun": {"eastAsiaFont": "宋体", "sizePt": 12},
+        "styles": {"Normal": {"run": {"eastAsiaFont": "宋体"}}},
+        "page": {"size": "a4"},
+        "paragraphRules": [{"match": {"textRegex": "x"}, "style": "Heading1", "maxMatches": 1}],
+    }
+    filtered = filter_profile_for_steps(profile, selected)
+    assert "defaultRun" in filtered
+    assert "paragraphRules" not in filtered
+    assert "page" not in filtered
+
+
+def test_analyze_and_apply_roundtrip(tmp_path: Path) -> None:
+    source = tmp_path / "messy.docx"
+    write_template_docx(source)
+    analysis = analyze_template(source)
+    draft = analysis["profile"]
+    assert draft["headingNumbering"]["formats"][0] == "chinese-counting"
+    assert any(item["find"] == "{{THESIS_TITLE}}" for item in draft.get("replacements") or [])
+    assert draft.get("paragraphRules")
+    assert all("styleNameNotRegex" in rule["match"] for rule in draft["paragraphRules"])
+    unresolved = " ".join(draft["requirements"]["unresolved"])
+    assert "占位符" in unresolved or "{{" in unresolved or "TOC" in unresolved or "STYLEREF" in unresolved or "章号" in unresolved
+
+    profile = {
+        "name": "roundtrip",
+        "profileVersion": "2.1",
+        "page": {"size": "a4", "orientation": "portrait"},
+        "defaultRun": {"latinFont": "Times New Roman", "eastAsiaFont": "宋体", "sizePt": 12},
+        "styles": {
+            "Normal": {
+                "run": {"eastAsiaFont": "宋体", "sizePt": 12, "latinFont": "Times New Roman"},
+                "paragraph": {"lineSpacing": 1.5, "keepNext": False},
+            },
+            "Heading1": {
+                "run": {"eastAsiaFont": "黑体", "sizePt": 16, "bold": True, "latinFont": "Times New Roman"},
+                "paragraph": {"keepNext": True},
+            },
+        },
+        "paragraphRules": [
+            {
+                "match": {
+                    "textRegex": r"^\d+\s+\S+",
+                    "styleNameNotRegex": "(?i)^toc",
+                    "textNotRegex": r".+\d$",
+                },
+                "style": "Heading1",
+                "textRegexReplace": {"pattern": r"^\d+\s+", "replacement": ""},
+                "maxMatches": 50,
+            }
+        ],
+        "fields": {"updateOnOpen": True},
+    }
+    assert not validate_profile(profile)
+    before = diff_document(source, profile)
+    before_failed = {item["name"] for item in before["failed"]}
+    assert any(name.startswith("defaultRun.eastAsiaFont") for name in before_failed)
+
+    plan = build_repair_plan(before, visual_qa(source, profile, None))
+    assert all(step.get("id") for step in plan["repairPlan"])
+
+    applied_path = tmp_path / "applied.docx"
+    apply_profile(source, applied_path, None, True, profile_data=profile)
+    after = diff_document(applied_path, profile)
+    after_failed = {item["name"] for item in after["failed"] if item["name"].startswith("defaultRun.")}
+    assert "defaultRun.eastAsiaFont" not in after_failed
+
+    model = build_model(applied_path, profile)
+    toc_blocks = [block for block in model["blocks"] if block.get("type") == "toc_entry"]
+    assert toc_blocks
+    heading_texts = [(block.get("text") or block.get("preview") or "") for block in model["blocks"] if block.get("styleId") == "Heading1"]
+    assert any(text.strip() in {"绪论", "1 绪论"} or text.endswith("绪论") for text in heading_texts)
+    toc_rewritten = [
+        block
+        for block in model["blocks"]
+        if block.get("type") == "toc_entry" and block.get("styleId") == "Heading1"
+    ]
+    assert not toc_rewritten
+
+    plan_out = tmp_path / "plan.json"
+    plan_out.write_text(__import__("json").dumps(plan, ensure_ascii=False), encoding="utf-8")
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(__import__("json").dumps(profile, ensure_ascii=False), encoding="utf-8")
+    planned = tmp_path / "planned.docx"
+    result = apply_with_optional_plan(
+        source,
+        planned,
+        profile_path,
+        True,
+        False,
+        plan_path=plan_out,
+        only_auto=True,
+        confirmed=True,
+    )
+    assert result["ok"]
+    assert result["appliedStepCount"] >= 1
+
+
 def main() -> None:
     test_compile_requirements()
     test_pagination_estimate()
@@ -235,12 +451,16 @@ def main() -> None:
     tmp.mkdir(exist_ok=True)
     try:
         test_model_diff_visual(tmp)
+        test_schema_examples()
+        test_plan_apply_filter()
+        test_analyze_and_apply_roundtrip(tmp)
     finally:
         for child in tmp.glob("*"):
             if child.is_file():
                 child.unlink()
-        tmp.rmdir()
-    print("v2 pipeline: compile/model/diff/plan/visual/repair checks passed")
+        if tmp.exists():
+            tmp.rmdir()
+    print("v2 pipeline: compile/model/diff/plan/visual/repair/schema/apply checks passed")
 
 
 if __name__ == "__main__":

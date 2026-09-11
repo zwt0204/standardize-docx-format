@@ -10,7 +10,7 @@
 
 ## 输入归一化
 
-接受文字、网页、PDF 或截图中的格式要求。先逐条提取可测量信息，不直接修改 DOCX。
+接受文字、网页、PDF 或截图中的格式要求。先逐条提取可测量信息，不直接修改 DOCX。`compile_requirements.py` 会读取 `.txt` / `.md` / `.html`，PDF 需要 `pdftotext`；截图仍须先 OCR 成文本。冲突按「区域 + 属性」记录，例如 `pageNumbers.front.format` 不会和 `body.sizePt` 互相覆盖。
 
 每条规则记录：
 

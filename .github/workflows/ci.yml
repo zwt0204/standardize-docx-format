@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Compile scripts
+        run: |
+          python -B -X utf8 -m py_compile \
+            standardize-docx-format/scripts/audit_docx.py \
+            standardize-docx-format/scripts/apply_profile.py \
+            standardize-docx-format/scripts/validate_docx.py \
+            standardize-docx-format/scripts/document_model.py \
+            standardize-docx-format/scripts/diff_profile.py \
+            standardize-docx-format/scripts/repair_plan.py \
+            standardize-docx-format/scripts/visual_qa.py \
+            standardize-docx-format/scripts/layout_estimate.py \
+            standardize-docx-format/scripts/visual_repair.py \
+            standardize-docx-format/scripts/compile_requirements.py \
+            standardize-docx-format/scripts/analyze_template.py \
+            standardize-docx-format/scripts/standardize.py \
+            standardize-docx-format/scripts/profile_schema.py \
+            standardize-docx-format/scripts/plan_apply.py \
+            standardize-docx-format/scripts/report.py
+      - name: Validate example profiles
+        run: |
+          python -B -X utf8 standardize-docx-format/scripts/profile_schema.py \
+            --input standardize-docx-format/references/thesis-cn.example.json
+          python -B -X utf8 standardize-docx-format/scripts/profile_schema.py \
+            --input standardize-docx-format/references/guangzhou-nanfang-thesis.example.json
+      - name: Regression tests
+        run: |
+          python -B -X utf8 standardize-docx-format/scripts/test_paragraph_match_safety.py
+          python -B -X utf8 standardize-docx-format/scripts/test_v2_pipeline.py

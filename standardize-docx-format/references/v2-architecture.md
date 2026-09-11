@@ -62,7 +62,20 @@ Requirement Source          Official Template
 python scripts/standardize.py pipeline --input thesis.docx --profile profile.json --work-dir .\qa-output
 ```
 
-真正写入 DOCX 必须显式确认：
+Repair Plan 每一步都有稳定 `id`。确认后可以只执行勾选的步骤：
+
+```powershell
+python scripts/standardize.py apply `
+  --input thesis.docx `
+  --output thesis.standardized.docx `
+  --profile profile.json `
+  --plan .\qa-output\repair-plan.json `
+  --only-auto --yes --force
+```
+
+`map_structure` 和 `pageBreakBefore` 不会进入 `--only-auto`；必须把它们的 id 写进 `--only-ids`。
+
+真正写入完整 Profile 仍须显式确认：
 
 ```powershell
 python scripts/standardize.py pipeline `

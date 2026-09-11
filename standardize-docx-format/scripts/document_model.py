@@ -331,8 +331,13 @@ def summarize(classified: list[dict[str, Any]], tree: dict[str, Any]) -> dict[st
         or counts.get("toc_entry", 0) > 0,
         "hasReferences": any(child.get("type") == "references" for child in tree.get("children", [])),
         "hasAppendix": any(child.get("type") == "appendix" for child in tree.get("children", [])),
+        "hasDeclaration": any(child.get("type") == "declaration" for child in tree.get("children", [])),
+        "hasAcknowledgement": any(child.get("type") == "acknowledgement" for child in tree.get("children", [])),
+        "hasListOfFigures": any(child.get("type") == "list_of_figures" for child in tree.get("children", [])),
+        "hasListOfTables": any(child.get("type") == "list_of_tables" for child in tree.get("children", [])),
         "figureCaptions": counts.get("figure_caption", 0),
         "tableCaptions": counts.get("table_caption", 0),
+        "equationCount": counts.get("equation", 0),
     }
 
 
@@ -380,6 +385,7 @@ def build_model(path: Path, profile: dict[str, Any] | None = None) -> dict[str, 
                 "styleId": item.get("styleId"),
                 "styleName": item.get("styleName"),
                 "preview": item.get("preview"),
+                "text": item.get("text"),
                 "inTable": item.get("inTable"),
                 "inTextBox": item.get("inTextBox"),
                 "hasDrawing": item.get("hasDrawing"),

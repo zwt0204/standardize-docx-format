@@ -104,6 +104,8 @@ Codex 会先把要求翻译成 JSON Profile。无法量化、互相矛盾或缺�
     │   └── openai.yaml
     ├── scripts/
     │   ├── standardize.py          # 统一 CLI / pipeline
+    │   ├── profile_schema.py       # Profile JSON Schema 校验
+    │   ├── plan_apply.py           # Repair Plan → 过滤后的 Profile
     │   ├── audit_docx.py
     │   ├── document_model.py
     │   ├── compile_requirements.py
@@ -115,6 +117,7 @@ Codex 会先把要求翻译成 JSON Profile。无法量化、互相矛盾或缺�
     │   └── visual_qa.py
     └── references/
         ├── v2-architecture.md
+        ├── profile.schema.json
         ├── profile-schema.md
         ├── spec-driven-workflow.md
         ├── ooxml-advanced.md
@@ -123,6 +126,8 @@ Codex 会先把要求翻译成 JSON Profile。无法量化、互相矛盾或缺�
 ```
 
 真正需要安装到 Codex 的目录是 `standardize-docx-format/`。仓库根目录的 README 和 `dist/` 不属于运行时 Skill。
+
+v2.1 在同一套脚本上补了三件工程化能力：`references/profile.schema.json` 校验、Repair Plan 按步骤执行（`--plan --only-auto/--only-ids --yes`）、以及从官方模板反推 numbering / TOC / 占位符 / 有界 `paragraphRules`。GitHub Actions 会编译脚本、校验示例 Profile 并跑回归测试。
 
 ## 环境要求
 
@@ -301,6 +306,23 @@ python .\standardize-docx-format\scripts\standardize.py pipeline `
   --apply --yes
 ```
 
+只执行 Repair Plan 里已确认的自动步骤：
+
+```powershell
+python .\standardize-docx-format\scripts\standardize.py apply `
+  --input "D:\docs\thesis.docx" `
+  --output "D:\docs\thesis.standardized.docx" `
+  --profile ".\profile.json" `
+  --plan ".\qa-output\repair-plan.json" `
+  --only-auto --yes --force
+```
+
+校验 Profile：
+
+```powershell
+python .\standardize-docx-format\scripts\standardize.py schema --input ".\profile.json"
+```
+
 工作目录会写出：
 
 ```text
@@ -398,6 +420,7 @@ python .\standardize-docx-format\scripts\standardize.py analyze-template --input
 
 完整字段说明见：
 
+- `standardize-docx-format/references/profile.schema.json`
 - `standardize-docx-format/references/profile-schema.md`
 - `standardize-docx-format/references/spec-driven-workflow.md`
 - `standardize-docx-format/references/ooxml-advanced.md`
@@ -567,7 +590,9 @@ python -B -X utf8 -m py_compile `
   .\standardize-docx-format\scripts\visual_repair.py `
   .\standardize-docx-format\scripts\compile_requirements.py `
   .\standardize-docx-format\scripts\analyze_template.py `
-  .\standardize-docx-format\scripts\standardize.py
+  .\standardize-docx-format\scripts\standardize.py `
+  .\standardize-docx-format\scripts\profile_schema.py `
+  .\standardize-docx-format\scripts\plan_apply.py
 ```
 
 回归测试：
@@ -610,11 +635,10 @@ Skill 结构校验可使用 Codex 自带的 `skill-creator/scripts/quick_validat
 
 建议的后续扩展包括：
 
-- 更完整的渲染页分页检测（标题孤行、图题跨页、参考文献跨页）。
-- HTML/网页规范和截图 OCR 的 Requirement Compiler。
-- 更完整的按章图表编号策略。
-- Profile JSON Schema 和编辑器自动补全。
-- GitHub Actions 自动测试与发布。
+- 用 LibreOffice/Word 渲染页做空白页、页眉碰撞和跨页表检测（启发式仍标为 estimated）。
+- 截图 OCR 的 Requirement Compiler（HTML 文本层已支持）。
+- 学校 Profile 库与更多匿名金标论文。
+- 公式、脚注、表格样式模型。
 - 浏览器端预览（核心 Engine 稳定后再做）。
 
 ## 许可证

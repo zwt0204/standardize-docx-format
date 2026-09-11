@@ -28,7 +28,7 @@ def write_compliance_report(
     visual: dict[str, Any] | None = None,
     plan: dict[str, Any] | None = None,
     validation: dict[str, Any] | None = None,
-) -> None:
+) -> dict[str, Any]:
     scores = dict((diff or {}).get("categoryScores") or {})
     visual_errors = (visual or {}).get("errorCount") or 0
     visual_warnings = (visual or {}).get("warningCount") or 0
@@ -73,6 +73,17 @@ def write_compliance_report(
         failed_rows.append("<tr><td colspan='4'>No formatting diffs.</td></tr>")
     plan_summary = (plan or {}).get("summary") or {}
     validation_failed = len((validation or {}).get("failed") or [])
+    structure_failed = [
+        item for item in failed if item.get("category") == "structure"
+    ]
+    human_items = []
+    for step in (plan or {}).get("repairPlan") or []:
+        if step.get("needsConfirmation"):
+            human_items.append(f"{step.get('id')}: {step.get('suggestion') or step.get('action')}")
+    if (visual or {}).get("render") and not (visual or {}).get("render", {}).get("ok", True):
+        human_items.append("Renderer failed; field results and final pagination still need Word/LibreOffice")
+    human_items.append("TOC/PAGE/SEQ field results must be refreshed in Word or a compatible renderer")
+    human_items.append("Cover coordinates, floating objects, macros, and OLE are outside machine PASS")
     html = f"""<!doctype html>
 <html lang="zh">
 <head>
@@ -94,7 +105,10 @@ def write_compliance_report(
   <p class="score {'ok' if overall >= 90 else 'bad'}">格式合规率：{overall}%</p>
   <p>repair plan: {html_escape(plan_summary.get('failed', 0))} steps,
      auto-applyable {html_escape(plan_summary.get('autoApplyable', 0))},
-     validation failed {html_escape(validation_failed)}</p>
+     validation failed {html_escape(validation_failed)},
+     structure gaps {html_escape(len(structure_failed))}</p>
+  <h2>Must review manually</h2>
+  <ul>{''.join(f'<li>{html_escape(item)}</li>' for item in human_items)}</ul>
   <h2>Category scores</h2>
   <table>
     <thead><tr><th>category</th><th>bar</th><th>score</th></tr></thead>
@@ -116,3 +130,15 @@ def write_compliance_report(
 """
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(html, encoding="utf-8")
+    return {
+        "ok": bool((diff or {}).get("ok", True)) and validation_failed == 0 and visual_errors == 0,
+        "overall": overall,
+        "categoryScores": scores,
+        "structureFailed": len(structure_failed),
+        "validationFailed": validation_failed,
+        "visualErrors": visual_errors,
+        "visualWarnings": visual_warnings,
+        "mustReview": human_items,
+        "reportHtml": str(output.resolve()),
+        "estimated": not bool((visual or {}).get("render")),
+    }

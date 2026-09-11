@@ -59,9 +59,10 @@ v2 compiler commands live in `scripts/standardize.py`. Prefer this sequence over
 1. `audit` / `model` to understand the source document.
 2. `compile` (spec text/PDF) or `analyze-template` (official DOCX) to draft a profile.
 3. `diff` then `plan` so the user can see expected vs actual and confirm repairs.
-4. `apply` only after confirmation. Never apply a repair plan silently.
-5. `validate` for structural checks and `visual` for layout risks / pagination estimates / optional render.
-6. `repair-visual` only after confirmation, and only for conservative keepNext / image-scale fixes.
+4. `apply` only after confirmation. Never apply a repair plan silently. Prefer `apply --plan repair-plan.json --only-auto --yes` so only confirmed auto steps run. `map_structure` and `pageBreakBefore` require explicit `--only-ids`.
+5. Validate the profile with `standardize.py schema` or by letting apply/compile/analyze-template run the bundled JSON Schema.
+6. `validate` for structural checks and `visual` for layout risks / pagination estimates / optional render.
+7. `repair-visual` only after confirmation, and only for conservative keepNext / image-scale fixes.
 
 Read [references/v2-architecture.md](references/v2-architecture.md) when building a semantic AST, repair plan, or visual QA loop.
 
@@ -131,6 +132,17 @@ python scripts/apply_profile.py `
   --profile profile.json
 ```
 
+To apply a reviewed repair plan instead of the whole profile:
+
+```powershell
+python scripts/standardize.py apply `
+  --input input.docx `
+  --output output.standardized.docx `
+  --profile profile.json `
+  --plan qa-output/repair-plan.json `
+  --only-auto --yes --force
+```
+
 The script applies package-safe OOXML changes and refuses in-place writes. It also refuses profiles with unresolved requirements/conflicts. Use `--force` only when replacing an existing output file is intentional; use `--allow-unresolved` only after the user explicitly accepts the risks.
 
 When `docx-cli` is available, use its modeled verbs for requirements outside the profile, including table formatting, paragraph-scoped corrections, header/footer content, image sizing, and locator-based exceptions. Use `docx raw` only after reading [references/ooxml-advanced.md](references/ooxml-advanced.md), and only for constructs with no modeled command.
@@ -188,7 +200,8 @@ Do not globally clear direct formatting unless the specification explicitly says
 - Use `scripts/document_model.py` or `standardize.py model` for a semantic Document AST.
 - Use `scripts/compile_requirements.py` to turn specification text into a draft profile; use `scripts/analyze_template.py` for an official template.
 - Use `scripts/diff_profile.py` and `scripts/repair_plan.py` before any mutation.
-- Use `scripts/apply_profile.py` for deterministic v1/v2 profile application.
+- Use `scripts/profile_schema.py` or `standardize.py schema` to validate a profile against `references/profile.schema.json`.
+- Use `scripts/apply_profile.py` for deterministic v1/v2 profile application, including `--plan` / `--only-auto` / `--only-ids`.
 - Use `scripts/validate_docx.py` for structural, word-count, placeholder, field, bookmark, style, page-number, and header/footer checks.
 - Use `scripts/visual_qa.py` for overflow, orphan headings, caption split, pagination estimates, and optional PDF/PNG render.
 - Use `scripts/visual_repair.py` or `standardize.py repair-visual` for conservative keepNext / image-scale repairs.

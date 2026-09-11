@@ -1,5 +1,11 @@
 {
   "name": "中文毕业论文通用 v2 示例",
+  "profileVersion": "2.1",
+  "captionNumbering": {
+    "chapterStyle": "Heading 1",
+    "separator": "-",
+    "strategy": "styleref-as-displayed"
+  },
   "document": {
     "type": "thesis",
     "sections": [
