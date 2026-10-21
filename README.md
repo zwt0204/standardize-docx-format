@@ -6,6 +6,8 @@
 
 它既可以根据学校提供的官方 Word 模板工作，也可以把自然语言、PDF、网页或截图中的格式要求转换为结构化 JSON Profile，再确定性地应用到现有 DOCX 文件中。
 
+也支持根据用户描述生成可编辑的 Word 原生流程图，并新建 DOCX 或插入已有文档。
+
 当前实现是 **v2.1**：同一套确定性 OOXML 引擎上，补了 Profile JSON Schema、可勾选的 Repair Plan、更深的模板反推，以及结构验收 / Visual QA。
 
 ```text
@@ -22,6 +24,7 @@ Skill 运行时说明（英文，给 Codex 读）见 [`standardize-docx-format/S
 
 ## 主要能力
 
+- 根据用户描述生成可编辑的 Word 原生流程图：开始/结束、处理、判断、分支、合流和回路，可新建 DOCX 或插入已有文档。
 - 保留原始 DOCX，默认输出新的 `.standardized.docx` 文件，拒绝原地覆盖。
 - 保留图片、表格、书签、字段、关系、页眉页脚和未建模 OOXML 扩展。
 - 支持 A3、A4、A5、Letter 等页面尺寸、横竖方向和逐节页边距。
@@ -401,6 +404,35 @@ python .\standardize-docx-format\scripts\standardize.py model --input thesis.doc
 python .\standardize-docx-format\scripts\standardize.py repair-visual --input thesis.docx --output thesis.visual.docx --profile profile.json
 ```
 
+## Word 原生流程图
+
+用户可以直接描述流程，例如：“提交申请，审核通过则归档，不通过退回修改后重新提交”。Skill 将描述转换为节点与连线 JSON，再生成 Word 2010+ 原生组合图形；节点、文字和连接符均可编辑。
+
+当前支持以下四种节点；`process` 是默认类型：
+
+| 节点 | JSON `type` | Word 形状 |
+| --- | --- | --- |
+| 开始 | `start` | 圆角矩形 |
+| 结束 | `end` | 圆角矩形 |
+| 处理 | `process` | 矩形 |
+| 判断 | `decision` | 菱形 |
+
+连接线支持方向箭头、分支标签、合流、回路和自环。输入／输出平行四边形、子流程、数据库、文档等节点目前尚未实现。
+
+```bash
+python standardize-docx-format/scripts/standardize.py flowchart \
+  --spec standardize-docx-format/references/flowchart.example.json \
+  --output approval.docx
+
+python standardize-docx-format/scripts/standardize.py flowchart \
+  --input report.docx --spec approval.json --output report.flowchart.docx \
+  --after-text '审批流程'
+```
+
+省略 `--input` 新建 A4 文档；省略 `--after-text` 追加到正文末尾。源文件不覆盖，已有输出须显式 `--force`。脚本接受结构化 JSON，自然语言解析由 skill 完成。支持自动布局和逐节点 `row` / `column` 网格定位，超出页面或预计文字溢出时拒绝生成；不修改已有流程图或 SmartArt。
+
+完整参数、验证流程与兼容边界见 [流程图说明](standardize-docx-format/references/flowchart.md)，可直接修改 [审批示例](standardize-docx-format/references/flowchart.example.json)。输出成功不等于 Word 视觉验收通过；Word 拖动节点后的连线行为需实机检查。
+
 ## 论文目录（TOC）安全
 
 真实中文论文几乎都有 `toc 1` / `toc 2` 目录行，文本形态常和章节标题相似（如 `1 绪论 1`）。对“数字开头即标题”的规则必须先排除目录：
@@ -721,6 +753,7 @@ python -B -X utf8 -m py_compile `
   .\standardize-docx-format\scripts\compile_requirements.py `
   .\standardize-docx-format\scripts\analyze_template.py `
   .\standardize-docx-format\scripts\standardize.py `
+  .\standardize-docx-format\scripts\flowchart.py `
   .\standardize-docx-format\scripts\profile_schema.py `
   .\standardize-docx-format\scripts\plan_apply.py `
   .\standardize-docx-format\scripts\report.py
@@ -731,7 +764,10 @@ python -B -X utf8 -m py_compile `
 ```powershell
 python -B -X utf8 .\standardize-docx-format\scripts\test_paragraph_match_safety.py
 python -B -X utf8 .\standardize-docx-format\scripts\test_v2_pipeline.py
+python -B -X utf8 -m pytest .\standardize-docx-format\scripts\test_flowchart.py -q
 ```
+
+流程图回归测试需要开发依赖 `pytest`（`python -m pip install pytest`）；运行时脚本仍仅依赖 Python 标准库。
 
 校验示例 Profile：
 

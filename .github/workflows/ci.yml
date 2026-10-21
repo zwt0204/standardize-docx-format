@@ -31,6 +31,7 @@ jobs:
             standardize-docx-format/scripts/compile_requirements.py \
             standardize-docx-format/scripts/analyze_template.py \
             standardize-docx-format/scripts/standardize.py \
+            standardize-docx-format/scripts/flowchart.py \
             standardize-docx-format/scripts/profile_schema.py \
             standardize-docx-format/scripts/plan_apply.py \
             standardize-docx-format/scripts/report.py
@@ -44,3 +45,7 @@ jobs:
         run: |
           python -B -X utf8 standardize-docx-format/scripts/test_paragraph_match_safety.py
           python -B -X utf8 standardize-docx-format/scripts/test_v2_pipeline.py
+      - name: Flowchart regression tests
+        run: |
+          python -m pip install pytest
+          python -B -X utf8 -m pytest standardize-docx-format/scripts/test_flowchart.py -q

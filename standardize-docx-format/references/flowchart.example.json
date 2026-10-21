@@ -1,0 +1,15 @@
+{
+  "title": "申请审批流程",
+  "nodes": [
+    {"id": "submit", "text": "提交申请", "type": "start"},
+    {"id": "review", "text": "通过？", "type": "decision"},
+    {"id": "archive", "text": "归档", "type": "end"},
+    {"id": "revise", "text": "退回修改", "type": "process"}
+  ],
+  "edges": [
+    {"from": "submit", "to": "review"},
+    {"from": "review", "to": "archive", "label": "是"},
+    {"from": "review", "to": "revise", "label": "否"},
+    {"from": "revise", "to": "submit"}
+  ]
+}

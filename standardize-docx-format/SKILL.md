@@ -1,6 +1,6 @@
 ---
 name: standardize-docx-format
-description: Standardize, assemble, and audit Microsoft Word .docx files from an official reference template, a natural-language/PDF/web formatting specification, or a reusable JSON profile. Use for thesis/dissertation formatting, template filling, Chinese/Latin script fonts, semantic style mapping, Chinese or decimal multilevel numbering, per-section layout and page numbering, first/odd/even headers and footers, TOC/caption/cross-reference/bibliography fields, cover placeholders, structural and word-count validation, format cleanup, document QA, or batch standardization while preserving complex DOCX content.
+description: Standardize, assemble, and audit Microsoft Word .docx files from a template, formatting specification, or JSON profile; also create editable native Word flowcharts from user descriptions. Use for thesis formatting, template filling, fonts, styles, numbering, sections, headers/footers, TOC/caption/reference fields, structural validation, document QA, or flowchart insertion while preserving complex DOCX content.
 ---
 
 # Standardize DOCX formatting
@@ -10,7 +10,7 @@ Normalize an existing `.docx` without rewriting its content model. Preserve the 
 ## Operating contract
 
 - Treat the source document as immutable. Write to a new output path unless the user explicitly requests replacement.
-- Require either a formatting specification, a reference template, or a JSON profile. If none exists, audit first and propose a profile instead of inventing a standard.
+- For formatting standardization, require either a formatting specification, a reference template, or a JSON profile. If none exists, audit first and propose a profile instead of inventing a standard. Flowchart creation uses its own diagram spec and does not require a formatting profile.
 - Preserve text, images, equations, fields, comments, tracked changes, bookmarks, relationships, and unmodeled embedded objects unless the requested standard requires changing them.
 - Prefer changing style definitions over applying direct formatting paragraph by paragraph.
 - Exclude cover pages, declarations, approval forms, or other special sections when their layout intentionally differs.
@@ -43,6 +43,12 @@ Safer Arabic-number heading rule pattern:
 }
 ```
 
+
+## Create an editable Word flowchart
+
+When the user asks for a new flowchart, read [references/flowchart.md](references/flowchart.md). Interpret their description into nodes, directed edges, decision labels, and return paths, then write a flowchart JSON spec and run `standardize.py flowchart`. Use native DrawingML shapes and attached connectors, not a screenshot. Clarify missing branches only when they affect the requested process; do not invent approval outcomes or business rules.
+
+The command can create an A4 DOCX or insert a grouped drawing into a source DOCX. It supports start/end, process, decision, branches, merges, and cycles; automatic layout or explicit row/column positions. Preserve the source and write to a new output. Deliver the spec and DOCX, audit the result, and render it when possible. Structural success is not proof of Word rendering or connector behavior when nodes are dragged; report the actual verification performed.
 
 ## Choose the execution path
 

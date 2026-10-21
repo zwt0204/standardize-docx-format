@@ -6,6 +6,8 @@ A Codex Skill for standardizing Microsoft Word `.docx` files. It targets theses,
 
 It can follow an official Word template, or compile natural-language / PDF / web / screenshot rules into a structured JSON profile and apply that profile deterministically to an existing DOCX.
 
+It also creates editable native Word flowcharts from user descriptions, either in a new DOCX or inserted into an existing document.
+
 The current implementation is **v2.1**: the same deterministic OOXML engine, plus Profile JSON Schema, a selectable Repair Plan, deeper template analysis, structural validation, and Visual QA.
 
 ```text
@@ -22,6 +24,7 @@ The runtime contract for Codex is [`standardize-docx-format/SKILL.md`](standardi
 
 ## Capabilities
 
+- Create editable native Word flowcharts from user descriptions: start/end, process, decision, branches, merges, and cycles; create a new DOCX or insert into an existing document.
 - Keep the source DOCX; write a new `.standardized.docx`; refuse in-place overwrite.
 - Preserve images, tables, bookmarks, fields, relationships, headers/footers, and unmodeled OOXML.
 - Page sizes A3/A4/A5/Letter, orientation, and per-section margins.
@@ -43,6 +46,33 @@ The runtime contract for Codex is [`standardize-docx-format/SKILL.md`](standardi
 - Compile a draft profile from spec text/PDF; reverse a draft from an official template (numbering, TOC, placeholders, bounded `paragraphRules`).
 - Validate profiles against `references/profile.schema.json`.
 - Backward-compatible v1 profiles plus v2 Profile / Document Spec.
+
+## Native Word flowcharts
+
+The skill interprets a user's process description into a JSON graph; the deterministic command creates editable Word 2010+ shapes, text boxes, and attached connectors in an inline grouped drawing.
+
+Four node types are supported; `process` is the default:
+
+| Node | JSON `type` | Word shape |
+| --- | --- | --- |
+| Start | `start` | Rounded rectangle |
+| End | `end` | Rounded rectangle |
+| Process | `process` | Rectangle |
+| Decision | `decision` | Diamond |
+
+Connectors support direction arrows, branch labels, merges, cycles, and self-loops. Input/output parallelograms, subprocess, database, and document nodes are not implemented yet.
+
+```bash
+python standardize-docx-format/scripts/standardize.py flowchart \
+  --spec standardize-docx-format/references/flowchart.example.json \
+  --output approval.docx
+
+python standardize-docx-format/scripts/standardize.py flowchart \
+  --input report.docx --spec approval.json --output report.flowchart.docx \
+  --after-text 'Approval process'
+```
+
+Omit `--input` to create an A4 document, or omit `--after-text` to append. Inputs remain untouched; replacing an existing output requires `--force`. Automatic layout and explicit per-node `row`/`column` positions are supported. Oversized canvases and estimated text overflow are refused. This does not edit existing flowcharts or SmartArt. See the [flowchart contract and verification guide](standardize-docx-format/references/flowchart.md). Successful generation does not prove Word rendering or connector attachment after dragging; verify those in Word.
 
 ## When to use it
 
@@ -485,6 +515,7 @@ python -B -X utf8 -m py_compile `
   .\standardize-docx-format\scripts\compile_requirements.py `
   .\standardize-docx-format\scripts\analyze_template.py `
   .\standardize-docx-format\scripts\standardize.py `
+  .\standardize-docx-format\scripts\flowchart.py `
   .\standardize-docx-format\scripts\profile_schema.py `
   .\standardize-docx-format\scripts\plan_apply.py `
   .\standardize-docx-format\scripts\report.py
@@ -493,11 +524,14 @@ python -B -X utf8 -m py_compile `
 ```powershell
 python -B -X utf8 .\standardize-docx-format\scripts\test_paragraph_match_safety.py
 python -B -X utf8 .\standardize-docx-format\scripts\test_v2_pipeline.py
+python -B -X utf8 -m pytest .\standardize-docx-format\scripts\test_flowchart.py -q
 python -B -X utf8 .\standardize-docx-format\scripts\profile_schema.py `
   --input .\standardize-docx-format\references\thesis-cn.example.json
 python -B -X utf8 .\standardize-docx-format\scripts\profile_schema.py `
   --input .\standardize-docx-format\references\guangzhou-nanfang-thesis.example.json
 ```
+
+Flowchart regression tests require the development dependency `pytest` (`python -m pip install pytest`); runtime scripts still use only the standard library.
 
 ## Design rules
 

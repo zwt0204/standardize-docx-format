@@ -15,6 +15,7 @@ from audit_docx import audit
 from compile_requirements import compile_text, read_source
 from diff_profile import diff_document, render_text as render_diff
 from document_model import build_model
+from flowchart import add_flowchart
 from profile_schema import validate_profile
 from repair_plan import build_repair_plan, render_text as render_plan
 from report import write_compliance_report
@@ -52,6 +53,13 @@ def command_audit(args: argparse.Namespace) -> dict[str, Any]:
     report = audit(args.input)
     dump(args.output, report)
     return {"ok": True, "output": str(args.output.resolve()) if args.output else None, "sections": len(report.get("sections") or [])}
+
+
+def command_flowchart(args: argparse.Namespace) -> dict[str, Any]:
+    if args.spec.resolve() == args.output.resolve() or (args.output.exists() and args.spec.samefile(args.output)):
+        raise ValueError("Refusing to overwrite the flowchart specification")
+    return add_flowchart(load_json(args.spec), args.output, source=args.input,
+                         after_text=args.after_text, force=args.force)
 
 
 def command_model(args: argparse.Namespace) -> dict[str, Any]:
@@ -233,6 +241,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="DOCX formatting compiler: audit, diff, repair, apply, visual QA.")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    flow_p = sub.add_parser("flowchart", help="Create an editable native Word flowchart from a JSON spec")
+    flow_p.add_argument("--spec", required=True, type=Path)
+    flow_p.add_argument("--output", required=True, type=Path)
+    flow_p.add_argument("--input", type=Path, help="Existing DOCX; omit to create a new A4 document")
+    flow_p.add_argument("--after-text", help="Insert after exactly one matching top-level paragraph; otherwise append")
+    flow_p.add_argument("--force", action="store_true", help="Replace an existing output, never the input/spec")
+    flow_p.set_defaults(func=command_flowchart)
+
     audit_p = sub.add_parser("audit", help="Read-only package and style inventory")
     add_io(audit_p, "Source .docx")
     audit_p.set_defaults(func=command_audit)
@@ -348,6 +364,8 @@ def main() -> int:
             "errors",
             "appliedStepIds",
             "appliedStepCount",
+            "visualConfirmation",
+            "compatibility",
         )
         public = {key: result[key] for key in public_keys if key in result}
         if isinstance(public.get("profile"), dict):
