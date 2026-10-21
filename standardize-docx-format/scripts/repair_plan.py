@@ -20,6 +20,7 @@ ACTION_HINTS = {
     "page": "set_page",
     "pageNumbers": "set_page_number",
     "headersFooters": "set_header_footer",
+    "tables": "set_table",
     "structure": "map_structure",
     "paragraph": "set_paragraph",
     "run": "set_run",
@@ -30,6 +31,10 @@ ACTION_HINTS = {
 def action_for(finding: dict[str, Any]) -> str:
     name = str(finding.get("name") or "")
     category = str(finding.get("category") or "")
+    actual = finding.get("actual")
+    if category == "headersFooters" and isinstance(actual, dict) and any(
+            str(error).startswith("unsupported:") for error in actual.get("errors", [])):
+        return "inspect"
     if name.startswith("defaultRun"):
         return "set_default_run"
     if name.startswith("styles.") or (category in {"paragraph", "run"} and "styles." in name):
@@ -103,6 +108,7 @@ def build_repair_plan(diff: dict[str, Any], visual: dict[str, Any] | None = None
                 "suggestion": finding.get("suggestion"),
                 "source": finding.get("name"),
                 "visual": False,
+                "impact": finding.get("impact"),
                 "reversible": action not in {"map_structure", "inspect"},
             }
         )
@@ -162,6 +168,8 @@ def render_text(plan: dict[str, Any]) -> str:
         lines.append(f"   to:   {step['to']}")
         if step.get("affected"):
             lines.append(f"   affected: {step['affected']}")
+        if step.get("impact"):
+            lines.append(f"   impact: {step['impact']}")
         if step.get("suggestion"):
             lines.append(f"   {step['suggestion']}")
     if not plan.get("repairPlan"):

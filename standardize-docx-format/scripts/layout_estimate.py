@@ -82,39 +82,94 @@ def paginate(model: dict[str, Any]) -> dict[str, Any]:
         y = 0.0
         current_page = {"page": page_index, "section": section_index, "blocks": [], "usedHeightIn": 0.0}
 
+    source_blocks = model.get("blocks") or []
+    by_index = {block["index"]: block for block in source_blocks}
+    tables = {table["index"]: table for table in model.get("tables") or []}
+
+    def row_height(row):
+        heights = []
+        for cell in row.get("cells") or []:
+            height = sum(estimated_height_in(by_index[index], cell.get("widthIn"), default_size, default_spacing)
+                         for index in cell.get("paragraphIndexes") or [] if index in by_index)
+            height += sum(sum(row_height(r) for r in tables[index].get("rows") or [])
+                          for index in cell.get("tableIndexes") or [] if index in tables)
+            heights.append(height)
+        return max([float(row.get("minHeightIn") or 0), *heights, 0.08])
+
+    # Adjacent cells occupy the same vertical band; paragraphs within each cell stack.
+    flow = []
+    seen_tables = set()
+    for block in source_blocks:
+        table_index = block.get("topTableIndex")
+        if table_index is None or table_index not in tables:
+            flow.append(block)
+            continue
+        if table_index in seen_tables:
+            continue
+        seen_tables.add(table_index)
+        table = tables[table_index]
+        header_height = 0.0
+        in_header = True
+        for row_index, row in enumerate(table.get("rows") or []):
+            height = row_height(row)
+            if in_header and row.get("header"):
+                header_height += height
+            else:
+                in_header = False
+            first_index = next((i for cell in row.get("cells") or [] for i in cell.get("paragraphIndexes") or []), block["index"])
+            flow.append({**block, "index": first_index, "type": "table_cell", "keepNext": False,
+                         "pageBreakBefore": False, "tableIndex": table_index, "rowIndex": row_index,
+                         "rowHeightIn": height, "cantSplit": row.get("cantSplit"),
+                         "repeatHeaderHeightIn": 0 if row.get("header") else header_height})
+
     placed: list[dict[str, Any]] = []
-    for block in model.get("blocks") or []:
+    pagination_issues = []
+    for offset, block in enumerate(flow):
         block_section = int(block.get("section") or 0)
         if block_section != section_index:
             new_page(block_section)
-        height = estimated_height_in(block, box.get("contentWidthIn"), default_size, default_spacing)
-        lookahead = None
-        if block.get("keepNext") or block.get("type") in HEADING_TYPES:
-            # Headings try to stay with the next block when keepNext is set.
-            next_blocks = (model.get("blocks") or [])
-            next_item = next((item for item in next_blocks if item.get("index") == (block.get("index") or 0) + 1), None)
-            if next_item is not None:
-                lookahead = estimated_height_in(next_item, box.get("contentWidthIn"), default_size, default_spacing)
-        needed = height + (lookahead if block.get("keepNext") and lookahead else 0)
-        if y > 0 and y + needed > content_height + 0.02:
+        if block.get("pageBreakBefore") and y > 0:
             new_page(block_section)
-        elif y > 0 and y + height > content_height + 0.02:
+        height = block.get("rowHeightIn") or estimated_height_in(block, box.get("contentWidthIn"), default_size, default_spacing)
+        next_item = flow[offset + 1] if offset + 1 < len(flow) else None
+        lookahead = (next_item.get("rowHeightIn") or estimated_height_in(next_item, box.get("contentWidthIn"), default_size, default_spacing)) if next_item else 0
+        needed = height + (lookahead if block.get("keepNext") else 0)
+        is_row = "rowHeightIn" in block
+        header = float(block.get("repeatHeaderHeightIn") or 0)
+        if y > 0 and y + needed > content_height + 0.02 and (not is_row or block.get("cantSplit")):
             new_page(block_section)
+            if is_row and header < content_height:
+                y = header
+        if is_row and height + header > content_height + 0.02:
+            pagination_issues.append({"type": "table_row_too_tall", "severity": "warning",
+                "message": "估算表格行连同重复表头超过一页正文高度，需真实渲染复核",
+                "tableIndex": block.get("tableIndex"), "rowIndex": block.get("rowIndex"),
+                "paragraphIndex": block.get("index"), "page": page_index})
         remaining_before = content_height - y
-        record = {
-            **{key: block.get(key) for key in ("index", "type", "preview", "styleId", "keepNext")},
-            "page": page_index,
-            "yIn": round(y, 4),
-            "heightIn": height,
-            "remainingBeforeIn": round(remaining_before, 4),
-        }
+        record = {**{key: block.get(key) for key in ("index", "type", "preview", "styleId", "keepNext", "tableIndex", "rowIndex")},
+                  "page": page_index, "yIn": round(y, 4), "heightIn": height,
+                  "remainingBeforeIn": round(remaining_before, 4)}
         current_page["blocks"].append(record["index"])
         placed.append(record)
-        y += height
+        if is_row and not block.get("cantSplit") and y + height > content_height + 0.02:
+            record["splitAcrossPages"] = True
+            remaining = height
+            while remaining > content_height - y + 0.02:
+                remaining -= max(content_height - y, 0)
+                y = content_height
+                new_page(block_section)
+                # An oversized header cannot leave space for a split body row.
+                y = header if header < content_height - 0.02 else 0
+                current_page["blocks"].append(record["index"])
+            y += remaining
+        else:
+            y += height
 
     flush()
     return {
         "engine": "ooxml-estimate",
+        "estimated": True,
+        "issues": pagination_issues,
         "pageCount": len(pages),
         "pages": pages,
         "blocks": placed,
@@ -126,9 +181,8 @@ def paginate(model: dict[str, Any]) -> dict[str, Any]:
 
 
 def detect_pagination_issues(estimate: dict[str, Any]) -> list[dict[str, Any]]:
-    issues: list[dict[str, Any]] = []
+    issues: list[dict[str, Any]] = list(estimate.get("issues") or [])
     blocks = estimate.get("blocks") or []
-    by_index = {item["index"]: item for item in blocks}
     pages = {page["page"]: page for page in estimate.get("pages") or []}
 
     for offset, item in enumerate(blocks):
@@ -211,6 +265,4 @@ def detect_pagination_issues(estimate: dict[str, Any]) -> list[dict[str, Any]]:
                     "repair": None,
                 }
             )
-    # keep by_index referenced for future locator work
-    _ = by_index
     return issues

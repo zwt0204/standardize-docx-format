@@ -304,7 +304,7 @@ Render order:
 
 1. `docx render … --out <render-dir>/rendered` if `docx` exists
 2. Else LibreOffice `--headless --convert-to pdf`, then `pdftoppm -png` when available
-3. Else `render.skipped=true`; heuristics still run
+3. Else `render.skipped=true` and `render.status=unavailable`; heuristics still run, but explicitly requested rendering makes top-level `ok=false`.
 
 The machine only flags tiny PNGs vs the median (possible blank page) and tiny PDFs (possible failed convert). Header collisions, table overflow, cover shift, TOC page numbers, CJK numbering, and STYLEREF need a human (or an agent reading the PNGs) plus Word field refresh.
 
@@ -520,3 +520,5 @@ Possible follow-ups: deeper render-page inspection, screenshot OCR for the requi
 ## License
 
 No open-source license is attached. All rights reserved unless the copyright holder grants permission.
+
+Visual QA separates `heuristicStatus`, `render.status`, and pending `visualConfirmation`. Table pagination is estimated by row/cell geometry, repeating headers and row-splitting settings; rendering success still requires human layout inspection. Selected outer body tables support `tableRules` for three-line borders, paragraph/run formatting, row splitting, alignment and widths; see [profile schema](standardize-docx-format/references/profile-schema.md). Header/footer repair steps report inheriting sections under `impact` and preserve Word linkage.

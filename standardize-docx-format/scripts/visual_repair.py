@@ -103,6 +103,10 @@ def apply_visual_repairs(
         if corrupt:
             raise ValueError(f"Input DOCX has corrupt member: {corrupt}")
     document = parse_xml(parts["word/document.xml"])
+    # QA indexes come from a single compatibility branch; the preserved source
+    # contains every branch, so numeric paragraph locators cannot be reused.
+    if document.getElementsByTagNameNS("http://schemas.openxmlformats.org/markup-compatibility/2006", "AlternateContent") and issues:
+        raise ValueError("Automatic visual repair is unsupported for markup compatibility branches; use a template-preserving locator edit")
     paragraphs = iter_paragraphs(document)
     applied: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -119,12 +123,10 @@ def apply_visual_repairs(
             if not width:
                 skipped.append({"type": issue_type, "reason": "missing content width"})
                 continue
-            changed = 0
-            if isinstance(index, int) and 0 <= index < len(paragraphs):
-                changed += scale_drawings(paragraphs[index], float(width))
-            else:
-                for paragraph in paragraphs:
-                    changed += scale_drawings(paragraph, float(width))
+            if not isinstance(index, int) or not 0 <= index < len(paragraphs):
+                skipped.append({"type": issue_type, "reason": "paragraph index out of range"})
+                continue
+            changed = scale_drawings(paragraphs[index], float(width))
             applied.append({"type": issue_type, "action": "scale_drawing", "changed": changed, "paragraphIndex": index})
             continue
         if not isinstance(index, int) or index < 0 or index >= len(paragraphs):

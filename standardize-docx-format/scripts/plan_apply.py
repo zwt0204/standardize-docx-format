@@ -14,6 +14,7 @@ AUTO_ACTIONS = {
     "set_page",
     "set_page_number",
     "set_header_footer",
+    "set_table",
     "set_keep_next",
     "scale_drawing",
 }
@@ -112,6 +113,7 @@ def filter_profile_for_steps(profile: dict[str, Any], steps: list[dict[str, Any]
             "captionRules",
             "bookmarkRules",
             "headersFooters",
+            "tableRules",
             "replacements",
             "fieldRules",
             "fields",
@@ -126,6 +128,7 @@ def filter_profile_for_steps(profile: dict[str, Any], steps: list[dict[str, Any]
     keep_styles: dict[str, set[str]] = {}
     keep_page_numbers = False
     keep_headers = False
+    table_indexes: set[int] = set()
     header_indexes: set[int] = set()
     page_number_sections: set[int] = set()
 
@@ -148,6 +151,8 @@ def filter_profile_for_steps(profile: dict[str, Any], steps: list[dict[str, Any]
                     page_number_sections.add(int(source.split("section[", 1)[1].split("]", 1)[0]))
                 except ValueError:
                     pass
+        elif action == "set_table" and source.startswith("tableRules["):
+            table_indexes.add(int(source.split("[", 1)[1].split("]", 1)[0]))
         elif action == "set_header_footer":
             keep_headers = True
             if source.startswith("headersFooters["):
@@ -156,6 +161,10 @@ def filter_profile_for_steps(profile: dict[str, Any], steps: list[dict[str, Any]
                 except ValueError:
                     pass
 
+    if table_indexes:
+        filtered["tableRules"] = [profile["tableRules"][i] for i in sorted(table_indexes) if 0 <= i < len(profile.get("tableRules", []))]
+    else:
+        filtered.pop("tableRules", None)
     if not keep_page:
         filtered.pop("page", None)
         filtered.pop("sections", None)

@@ -183,6 +183,7 @@ def paragraph_blocks(document) -> list[dict[str, Any]]:
                     "inTextBox": in_text_box,
                     "hasDrawing": has_drawing,
                     "hasTable": block.nodeName == "w:tbl" or in_table,
+                    "drawingWidthsIn": [emu_to_inches(extent.getAttribute("cx")) for extent in paragraph.getElementsByTagName("wp:extent")],
                     "drawingWidthIn": drawing_width,
                     "drawingHeightIn": drawing_height,
                 }
@@ -193,6 +194,90 @@ def paragraph_blocks(document) -> list[dict[str, Any]]:
         elif block.nodeName == "w:sectPr":
             section_index += 1
     return blocks
+
+
+def measure_width(node, container_width: float | None) -> float | None:
+    """Resolve OOXML preferred widths; auto/nil are not twip measurements."""
+    if node is None:
+        return None
+    kind = attr(node, "w:type") or "dxa"
+    try:
+        raw = attr(node, "w:w") or "0"
+        if kind == "pct":
+            fraction = float(raw[:-1]) / 100 if raw.endswith("%") else float(raw) / 5000
+            return container_width * fraction if container_width is not None else None
+        if kind == "dxa":
+            return float(raw) / 1440
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def layout_geometry(document, sections: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[int, dict[str, Any]]]:
+    """Keep section/container provenance for tables and every body paragraph."""
+    from layout_estimate import page_content_box
+    tables: list[dict[str, Any]] = []
+    geometry: dict[int, dict[str, Any]] = {}
+    section = 0
+
+    def enabled(node) -> bool:
+        return node is not None and attr(node, "w:val") not in {"0", "false", "off"}
+
+    def visit(node, width, top_table=None):
+        if node.nodeName == "w:tbl":
+            table_index = len(tables)
+            top_table = table_index if top_table is None else top_table
+            pr = direct_child(node, "w:tblPr")
+            grid = direct_child(node, "w:tblGrid")
+            grid_widths = [float(attr(c, "w:w") or 0) / 1440 for c in element_children(grid)] if grid else []
+            preferred = measure_width(direct_child(pr, "w:tblW"), width)
+            table_width = preferred if preferred and preferred > 0 else (sum(grid_widths) or width)
+            info = {"index": table_index, "section": section, "topTableIndex": top_table,
+                    "containerWidthIn": width, "widthIn": table_width, "rows": []}
+            tables.append(info)
+            for row in (c for c in element_children(node) if c.nodeName == "w:tr"):
+                tr_pr = direct_child(row, "w:trPr")
+                height_node = direct_child(tr_pr, "w:trHeight")
+                row_info = {"header": enabled(direct_child(tr_pr, "w:tblHeader")),
+                            "cantSplit": enabled(direct_child(tr_pr, "w:cantSplit")),
+                            "minHeightIn": float(attr(height_node, "w:val") or 0) / 1440,
+                            "cells": []}
+                info["rows"].append(row_info)
+                cells = [c for c in element_children(row) if c.nodeName == "w:tc"]
+                grid_offset = 0
+                for cell in cells:
+                    cell_pr = direct_child(cell, "w:tcPr")
+                    span = int(attr(direct_child(cell_pr, "w:gridSpan"), "w:val") or 1)
+                    grid_cell = sum(grid_widths[grid_offset:grid_offset + span])
+                    grid_offset += span
+                    cell_width = measure_width(direct_child(cell_pr, "w:tcW"), table_width)
+                    cell_width = cell_width or grid_cell or ((table_width or 6.5) / max(len(cells), 1))
+                    cell_info = {"widthIn": cell_width, "paragraphIds": [], "tableIndexes": []}
+                    row_info["cells"].append(cell_info)
+                    for child in element_children(cell):
+                        if child.nodeName == "w:tbl":
+                            cell_info["tableIndexes"].append(len(tables))
+                        visit(child, cell_width, top_table)
+                    # Direct cell paragraphs belong to this table, nested ones retain theirs.
+                    for child in cell.getElementsByTagName("w:p"):
+                        if ancestor(child.parentNode, "w:tbl") is node:
+                            geometry[id(child)]["tableIndex"] = table_index
+                            if id(child) not in cell_info["paragraphIds"]:
+                                cell_info["paragraphIds"].append(id(child))
+            return
+        if node.nodeName == "w:p":
+            geometry[id(node)] = {"containerWidthIn": width, "topTableIndex": top_table}
+        for child in element_children(node):
+            visit(child, width, top_table)
+
+    bodies = document.getElementsByTagName("w:body")
+    if bodies:
+        for child in element_children(bodies[0]):
+            box = page_content_box(sections[min(section, len(sections) - 1)]) if sections else {}
+            visit(child, box.get("contentWidthIn"))
+            if child.nodeName == "w:p" and direct_child(direct_child(child, "w:pPr"), "w:sectPr") is not None:
+                section += 1
+    return tables, geometry
 
 
 def enrich_style_names(blocks: list[dict[str, Any]], styles: dict[str, Any]) -> None:
@@ -356,6 +441,15 @@ def build_model(path: Path, profile: dict[str, Any] | None = None) -> dict[str, 
     with zipfile.ZipFile(path, "r") as archive:
         document = parse_xml(archive.read("word/document.xml"))
     blocks = paragraph_blocks(document)
+    tables, geometry = layout_geometry(document, report.get("sections") or [])
+    paragraphs = list(document.getElementsByTagName("w:body")[0].getElementsByTagName("w:p"))
+    paragraph_indexes = {id(node): index for index, node in enumerate(paragraphs)}
+    for item, paragraph in zip(blocks, paragraphs):
+        item.update(geometry.get(id(paragraph), {}))
+    for table in tables:
+        for row in table["rows"]:
+            for cell in row["cells"]:
+                cell["paragraphIndexes"] = [paragraph_indexes[key] for key in cell.pop("paragraphIds")]
     enrich_style_names(blocks, report.get("styles") or {})
     spec = document_spec(profile)
     region = "cover"
@@ -376,6 +470,7 @@ def build_model(path: Path, profile: dict[str, Any] | None = None) -> dict[str, 
         "documentType": spec["type"],
         "tree": tree,
         "summary": summarize(classified, tree),
+        "tables": tables,
         "blocks": [
             {
                 "index": item["index"],
@@ -387,6 +482,9 @@ def build_model(path: Path, profile: dict[str, Any] | None = None) -> dict[str, 
                 "preview": item.get("preview"),
                 "text": item.get("text"),
                 "inTable": item.get("inTable"),
+                "tableIndex": item.get("tableIndex"),
+                "topTableIndex": item.get("topTableIndex"),
+                "containerWidthIn": item.get("containerWidthIn"),
                 "inTextBox": item.get("inTextBox"),
                 "hasDrawing": item.get("hasDrawing"),
                 "keepNext": (item.get("paragraph") or {}).get("keepNext"),
@@ -395,6 +493,7 @@ def build_model(path: Path, profile: dict[str, Any] | None = None) -> dict[str, 
                 "textLength": len((item.get("text") or "").strip()),
                 "sizePt": (item.get("run") or {}).get("sizePt"),
                 "lineSpacing": (item.get("paragraph") or {}).get("lineSpacing"),
+                "drawingWidthsIn": item.get("drawingWidthsIn"),
                 "drawingWidthIn": item.get("drawingWidthIn"),
                 "drawingHeightIn": item.get("drawingHeightIn"),
             }

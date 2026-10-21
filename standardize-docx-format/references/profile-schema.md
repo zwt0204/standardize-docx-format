@@ -404,7 +404,11 @@ python scripts/validate_docx.py --input output.docx --profile profile.json --out
 }
 ```
 
-校验会同时核对 profile 中的分节页码和新建页眉页脚引用。脚本校验不能替代 Word 的最终分页、浮动对象和域结果渲染检查。
+校验会同时核对 profile 中的分节页码，以及页眉页脚的实际文字、域指令、指定字体/段落格式、下边框和首页/奇偶页开关。`inherit` 保留原有引用；`clear` 验证实际空白；域缓存更新不视为内容差异。顶层 `paragraph` 与 `paragraphs[].paragraph` 使用相同的段落参数。
+
+三线表使用 `tableRules`，每条规则必须声明 `preset: "three-line"` 和非空 `tableIndexes`（从 0 开始的正文外层表格索引，排除嵌套及文本框表格）。可选参数：`headerRows`（默认 1）、`outerSizePt`（默认 1.5）、`headerSizePt`（默认 0.75）、`color`（默认 `000000`）及 `repeatHeader`（默认 true）。线宽范围为 0.25–12 磅，步进 0.125 磅；颜色为六位十六进制或 `auto`。索引不得重复。脚本默认保留内容、列宽与合并结构，清除原单元格竖线/内横线；跨表头的纵向合并和包装行/单元格会拒绝应用。Diff 和 Validate 都检查这些指定属性；Repair Plan 的 `set_table` 仅保留被选中的规则。
+
+脚本校验不能替代 Word 的最终分页、浮动对象和域结果渲染检查。
 
 v2 建议把结构验收和视觉验收分开：
 
@@ -414,3 +418,12 @@ python scripts/standardize.py visual --input output.docx --profile profile.json 
 ```
 
 完整流水线见 [v2-architecture.md](v2-architecture.md)。
+
+
+表格还可显式指定 `paragraph` / `run`（沿用段落和字体字段，但段落对齐仅支持 left/center/right/justify，字体不支持 updateTheme）、`allowRowSplit`（false 写入 cantSplit）、`alignment`（left/center/right）、`widthIn`（首选总宽度）和 `columnWidthsIn`（各网格列英寸宽度，固定布局，支持 gridSpan）。列宽总和必须与显式总宽度一致；不一致网格、旧式横向合并和省略列会拒绝列宽修改。未指定的布局属性保持原样，嵌套表格不随外层格式修改。
+
+规范编译支持单条明确指令，例如：`正文表格索引0,2采用三线表，表头行数1，上下线1.5磅，表头线0.75磅`。缺少定位或量化要求时仍记录 unresolved。模板分析只保守提取完整显式三线边框，目标表格映射须确认；不能从模板样式猜测全部表格。
+
+页眉页脚修复计划的 `impact.inheritingSections` 提示后续链接节；默认保留 Word 继承行为。even 开关影响全文，first 开关同时影响本节页眉与页脚。浮动文本框等不支持重建的内容不能用普通段落替换。
+
+兼容分支（mc:AlternateContent）内含表格时，不同表示的表格序号可能错位；模板分析记录 unresolved，tableRules 拒绝按数字索引修改，须用保留模板的明确定位编辑。

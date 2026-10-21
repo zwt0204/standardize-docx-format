@@ -15,6 +15,7 @@ from typing import Any
 from xml.dom import Node, minidom
 
 from profile_schema import ensure_profile
+from table_format import apply_tables
 
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -383,6 +384,44 @@ def ensure_style(styles_root: Node, style_id: str, config: dict[str, Any]) -> No
     return style
 
 
+def inherited_indent_attributes(p_pr: Node) -> dict[str, str]:
+    """Collect the attributes a new direct indentation would otherwise inherit."""
+    document = p_pr.ownerDocument
+    styles = getattr(document, "_format_styles_document", document)
+    roots = styles.getElementsByTagName("w:styles")
+    if not roots:
+        return {}
+    root = roots[0]
+    values: dict[str, str] = {}
+    def merge(properties):
+        indent = direct_child(properties, "w:ind")
+        if indent is not None:
+            for name in ("firstLine", "firstLineChars", "hanging", "hangingChars"):
+                if indent.hasAttribute("w:" + name):
+                    values[name] = indent.getAttribute("w:" + name)
+    merge(direct_child(direct_child(direct_child(root, "w:docDefaults"), "w:pPrDefault"), "w:pPr"))
+    nodes = {node.getAttribute("w:styleId"): node for node in root.getElementsByTagName("w:style")}
+    parent = p_pr.parentNode
+    if parent.nodeName == "w:style":
+        based = direct_child(parent, "w:basedOn")
+        style_id = based.getAttribute("w:val") if based is not None else None
+    else:
+        style = direct_child(p_pr, "w:pStyle")
+        style_id = style.getAttribute("w:val") if style is not None else next(
+            (key for key, node in nodes.items() if node.getAttribute("w:type") == "paragraph"
+             and node.getAttribute("w:default") in {"1", "true", "on"}), "Normal")
+    chain, seen = [], set()
+    while style_id in nodes and style_id not in seen:
+        seen.add(style_id)
+        node = nodes[style_id]
+        chain.append(node)
+        based = direct_child(node, "w:basedOn")
+        style_id = based.getAttribute("w:val") if based is not None else None
+    for node in reversed(chain):
+        merge(direct_child(node, "w:pPr"))
+    return values
+
+
 def apply_paragraph_format(p_pr: Node, config: dict[str, Any], size_pt: float | None) -> None:
     if not config:
         return
@@ -416,17 +455,41 @@ def apply_paragraph_format(p_pr: Node, config: dict[str, Any], size_pt: float | 
     if any(key in config for key in indent_keys):
         if "firstLineIn" in config and "firstLineChars" in config:
             raise ValueError("Use only one of firstLineIn and firstLineChars")
+        if "hangingIn" in config and ("firstLineIn" in config or "firstLineChars" in config):
+            raise ValueError("Use only one of hangingIn and first-line indentation")
         indent = ensure_direct(p_pr, "w:ind", PPR_ORDER)
-        mapping = {"leftIn": "left", "rightIn": "right", "firstLineIn": "firstLine", "hangingIn": "hanging"}
-        for key, attribute in mapping.items():
+        for key, attribute in (("leftIn", "left"), ("rightIn", "right")):
             if key in config:
                 indent.setAttribute(f"w:{attribute}", str(inches_to_twips(config[key], key)))
-        if "firstLineChars" in config:
-            chars = config["firstLineChars"]
-            if not isinstance(chars, (int, float)) or chars < 0:
-                raise ValueError("firstLineChars must be non-negative")
-            effective_size = size_pt or 12
-            indent.setAttribute("w:firstLine", str(round(float(chars) * effective_size * 20)))
+        if any(key in config for key in ("firstLineIn", "firstLineChars", "hangingIn")):
+            if "firstLineChars" in config:
+                chars = config["firstLineChars"]
+                if not isinstance(chars, (int, float)) or chars < 0:
+                    raise ValueError("firstLineChars must be non-negative")
+                value = round(float(chars) * (size_pt or 12) * 20)
+                attribute = "firstLine"
+            else:
+                attribute = "hanging" if "hangingIn" in config else "firstLine"
+                value = inches_to_twips(config.get(attribute + "In", 0), attribute + "In")
+            inherited = inherited_indent_attributes(p_pr)
+            if value:
+                opposite = "hanging" if attribute == "firstLine" else "firstLine"
+                conflicts = [name for name in inherited
+                             if name in {"firstLineChars", "hangingChars", opposite}]
+                if conflicts:
+                    raise ValueError("Cannot safely set nonzero physical indentation over inherited "
+                                     + ", ".join(conflicts)
+                                     + "; normalize the paragraph style/default indentation first")
+                # Preserve the historical character profile contract: a physical
+                # indent calculated from its requested font size, not native chars.
+                for name in ("firstLine", "firstLineChars", "hanging", "hangingChars"):
+                    if indent.hasAttribute("w:" + name):
+                        indent.removeAttribute("w:" + name)
+                indent.setAttribute("w:" + attribute, str(value))
+            else:
+                # Explicit zeros cancel every inherited competing attribute.
+                for name in ("firstLine", "firstLineChars", "hanging", "hangingChars"):
+                    indent.setAttribute("w:" + name, "0")
 
     for key, tag in (
         ("keepNext", "w:keepNext"), ("keepLines", "w:keepLines"),
@@ -463,6 +526,16 @@ def apply_styles(styles_root: Node, styles_config: dict[str, Any], default_run: 
             size_pt = run_config.get("sizePt", default_run.get("sizePt"))
             apply_paragraph_format(p_pr, paragraph_config, float(size_pt) if size_pt else None)
         changed += 1
+    # Recheck after every style is configured: a later parent style may introduce
+    # a character/opposite indent that an earlier child could not yet observe.
+    for style_id, config in styles_config.items():
+        paragraph_config = config.get("paragraph", {})
+        if any(key in paragraph_config for key in ("firstLineIn", "firstLineChars", "hangingIn")):
+            style = next(node for node in styles_root.getElementsByTagName("w:style")
+                         if node.getAttribute("w:styleId") == style_id)
+            run_config = config.get("run", {})
+            size = run_config.get("sizePt", default_run.get("sizePt"))
+            apply_paragraph_format(direct_child(style, "w:pPr"), paragraph_config, size)
     return changed
 
 
@@ -1221,10 +1294,12 @@ def apply_headers_footers(
         marginal = minidom.parseString(
             f'<?xml version="1.0" encoding="UTF-8"?><{root_tag} xmlns:w="{W_NS}"/>'
         )
+        marginal._format_styles_document = getattr(document, "_format_styles_document", document)
         root = marginal.documentElement
         paragraphs = rule.get("paragraphs", []) if action == "set" else []
         if action == "set" and not paragraphs:
-            paragraphs = [{"text": str(rule.get("text", "")), "alignment": rule.get("alignment", "center"),
+            paragraphs = [{"text": str(rule.get("text", "")), "alignment": rule.get("alignment", (rule.get("paragraph") or {}).get("alignment", "center")),
+                           "paragraph": rule.get("paragraph", {}),
                            "run": rule.get("run", {}), "segments": rule.get("segments"),
                            "bottomBorder": rule.get("bottomBorder", {})}]
         if not isinstance(paragraphs, list):
@@ -1565,6 +1640,7 @@ def apply_profile(
     summary: dict[str, Any] = {"profile": profile.get("name"), "input": str(input_path.resolve())}
     document = parse_xml(parts["word/document.xml"])
     styles_document, styles_root = ensure_styles_root(parts)
+    document._format_styles_document = styles_document
     default_run = profile.get("defaultRun", {})
     if not isinstance(default_run, dict):
         raise ValueError("defaultRun must be an object")
@@ -1580,6 +1656,7 @@ def apply_profile(
     apply_caption_rules(document, profile.get("captionRules", []), default_run, summary, profile)
     apply_bookmark_rules(document, profile.get("bookmarkRules", []), summary)
     apply_headers_footers(parts, document, profile.get("headersFooters", []), summary)
+    apply_tables(document, profile.get("tableRules", []), summary)
     parts["word/document.xml"] = xml_bytes(document)
     apply_replacements(parts, profile.get("replacements", []), summary)
     apply_field_rules(parts, profile.get("fieldRules", []), summary)

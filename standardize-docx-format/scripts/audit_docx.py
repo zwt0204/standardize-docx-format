@@ -38,8 +38,56 @@ def attr(node: Node | None, name: str) -> str | None:
     return node.getAttribute(name)
 
 
+# Select one markup compatibility branch in an audit-only DOM. The package is untouched.
+MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+SUPPORTED_CHOICE_NAMESPACES = {
+    "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+    "http://schemas.openxmlformats.org/drawingml/2006/main",
+    "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+    "http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
+    "urn:schemas-microsoft-com:vml",
+}
+
+
+def namespace_uri(node: Node, prefix: str) -> str | None:
+    while node is not None:
+        if getattr(node, "hasAttribute", lambda _: False)("xmlns:" + prefix):
+            return node.getAttribute("xmlns:" + prefix)
+        node = node.parentNode
+    return None
+
+
+def select_compatibility_branches(document: minidom.Document) -> None:
+    def visit(node):
+        for child in list(node.childNodes):
+            if child.nodeType != Node.ELEMENT_NODE:
+                continue
+            if child.namespaceURI == MC_NS and child.localName == "AlternateContent":
+                branches = element_children(child)
+                selected = next((branch for branch in branches
+                                 if branch.namespaceURI == MC_NS and branch.localName == "Choice"
+                                 and branch.getAttribute("Requires").split()
+                                 and all(namespace_uri(branch, prefix) in SUPPORTED_CHOICE_NAMESPACES
+                                         for prefix in branch.getAttribute("Requires").split())), None)
+                if selected is None:
+                    selected = next((branch for branch in branches
+                                     if branch.namespaceURI == MC_NS and branch.localName == "Fallback"), None)
+                if selected is not None:
+                    for content in list(selected.childNodes):
+                        node.insertBefore(content, child)
+                node.removeChild(child)
+                # Nested AlternateContent is selected after its parent has been expanded.
+                visit(node)
+                return
+            visit(child)
+    visit(document)
+
+
 def parse_xml(data: bytes) -> minidom.Document:
-    return minidom.parseString(data)
+    document = minidom.parseString(data)
+    select_compatibility_branches(document)
+    return document
 
 
 def twips_to_inches(value: str | None) -> float | None:
@@ -113,6 +161,7 @@ def section_report(
                     "type": attr(node, "w:type") or "default",
                     "relationshipId": relationship_id,
                     "target": relationship.get("target"),
+                    "relationshipType": relationship.get("type"),
                 }
             )
         return out
@@ -140,7 +189,7 @@ def section_report(
             "format": attr(pg_num, "w:fmt"),
             "start": int(attr(pg_num, "w:start")) if (attr(pg_num, "w:start") or "").isdigit() else None,
         },
-        "differentFirstPage": direct_child(section, "w:titlePg") is not None,
+        "differentFirstPage": bool(toggle_on(direct_child(section, "w:titlePg"))),
         "headerReferences": header_references,
         "footerReferences": footer_references,
     }
@@ -173,6 +222,7 @@ def paragraph_props(p_pr: Node | None) -> dict[str, Any]:
         else:
             line_spacing_exact_pt = round(value / 20, 4)
     first_line_chars = attr(indent, "w:firstLineChars")
+    hanging_chars = attr(indent, "w:hangingChars")
     return {
         "alignment": attr(jc, "w:val"),
         "lineSpacing": line_spacing,
@@ -189,6 +239,7 @@ def paragraph_props(p_pr: Node | None) -> dict[str, Any]:
         "firstLineIn": twips_to_inches(attr(indent, "w:firstLine")),
         "hangingIn": twips_to_inches(attr(indent, "w:hanging")),
         "firstLineChars": int(first_line_chars) / 100 if (first_line_chars or "").isdigit() else None,
+        "hangingChars": int(hanging_chars) / 100 if (hanging_chars or "").isdigit() else None,
         "keepNext": toggle_on(direct_child(p_pr, "w:keepNext")),
         "keepLines": toggle_on(direct_child(p_pr, "w:keepLines")),
         "pageBreakBefore": toggle_on(direct_child(p_pr, "w:pageBreakBefore")),
@@ -247,8 +298,15 @@ def style_catalog(styles: minidom.Document | None) -> dict[str, Any]:
         name = direct_child(style, "w:name")
         p_pr = direct_child(style, "w:pPr")
         r_pr = direct_child(style, "w:rPr")
-        run = run_props(r_pr)
-        paragraph = paragraph_props(p_pr)
+        # Report effective style formatting, including basedOn and document defaults.
+        probe = styles.createElement("w:p")
+        probe_pr = styles.createElement("w:pPr")
+        probe_style = styles.createElement("w:pStyle")
+        probe_style.setAttribute("w:val", style_id)
+        probe_pr.appendChild(probe_style)
+        probe.appendChild(probe_pr)
+        nodes = {attr(item, "w:styleId"): item for item in styles.getElementsByTagName("w:style")}
+        paragraph, run, _ = marginal_effective_props(probe, None, (styles, nodes, "Normal"))
         out[style_id] = {
             "name": attr(name, "w:val"),
             "type": attr(style, "w:type"),
@@ -299,13 +357,23 @@ def paragraph_inventory(document: minidom.Document) -> dict[str, Any]:
     }
 
 
+def marginal_part_names(parts: dict[str, bytes]) -> set[str]:
+    names = {name for name in parts if re.fullmatch(r"word/(header|footer)\d+\.xml", name)}
+    for relationship in document_relationships(parts).values():
+        if relationship["type"].rsplit("/", 1)[-1] in {"header", "footer"}:
+            if relationship["target"] in parts:
+                names.add(relationship["target"])
+    return names
+
+
 def field_inventory(parts: dict[str, bytes]) -> dict[str, Any]:
     instructions: list[str] = []
+    marginal_names = marginal_part_names(parts)
     candidates = [
         name
         for name in parts
         if name == "word/document.xml"
-        or re.fullmatch(r"word/(header|footer)\d+\.xml", name)
+        or name in marginal_names
         or name in {"word/footnotes.xml", "word/endnotes.xml"}
     ]
     for name in candidates:
@@ -379,11 +447,126 @@ def object_inventory(document: minidom.Document) -> dict[str, int]:
     }
 
 
+def marginal_style_context(parts: dict[str, bytes]):
+    styles = parse_xml(parts["word/styles.xml"]) if "word/styles.xml" in parts else None
+    nodes = {attr(node, "w:styleId"): node for node in styles.getElementsByTagName("w:style")} if styles else {}
+    default_style = next((key for key, node in nodes.items() if attr(node, "w:type") == "paragraph" and toggle_on_attribute(node, "w:default")), "Normal")
+    return styles, nodes, default_style
+
+
+def toggle_on_attribute(node, name):
+    return attr(node, name) in {"1", "true", "on"}
+
+
+def marginal_effective_props(paragraph, run, context):
+    styles, nodes, default_style = context
+    p_pr = direct_child(paragraph, "w:pPr")
+    p_style = attr(direct_child(p_pr, "w:pStyle"), "w:val") or default_style
+    run_pr = direct_child(run, "w:rPr") if run is not None else None
+    r_style = attr(direct_child(run_pr, "w:rStyle"), "w:val")
+
+    def chain(style_id):
+        result, seen = [], set()
+        while style_id in nodes and style_id not in seen:
+            seen.add(style_id)
+            node = nodes[style_id]
+            result.append(node)
+            style_id = attr(direct_child(node, "w:basedOn"), "w:val")
+        return list(reversed(result))
+
+    def overlay(base, values):
+        if values.get("lineSpacing") is not None:
+            base.pop("lineSpacingExactPt", None)
+        elif values.get("lineSpacingExactPt") is not None:
+            base.pop("lineSpacing", None)
+        base.update({key: value for key, value in values.items() if value is not None})
+
+    props = {"alignment": "left", "spaceBeforePt": 0, "spaceAfterPt": 0,
+             "firstLineIn": 0, "hangingIn": None, "leftIn": 0, "rightIn": 0,
+             "keepNext": False, "keepLines": False, "pageBreakBefore": False}
+    fonts = {"bold": False, "italic": False}
+    overlay(props, default_paragraph_report(styles) or {})
+    overlay(fonts, default_run_report(styles) or {})
+    border = {}
+    paragraph_chain = chain(p_style)
+    for node in paragraph_chain:
+        overlay(props, paragraph_props(direct_child(node, "w:pPr")))
+    overlay(props, paragraph_props(p_pr))
+    for node in [*paragraph_chain, *chain(r_style)]:
+        config = run_props(direct_child(node, "w:rPr"))
+        # Bold and italic are toggles inside style definitions, overrides on runs.
+        for key in ("bold", "italic"):
+            if config.pop(key, None):
+                fonts[key] = not fonts.get(key, False)
+        overlay(fonts, config)
+    overlay(fonts, run_props(run_pr))
+    for node in [*(direct_child(n, "w:pPr") for n in paragraph_chain), p_pr]:
+        bottom = direct_child(direct_child(node, "w:pBdr"), "w:bottom")
+        if bottom is not None:
+            border = {key: attr(bottom, attribute) for key, attribute in
+                      (("style", "w:val"), ("size", "w:sz"), ("space", "w:space"), ("color", "w:color"))}
+    # Character units supersede physical units; hanging supersedes first-line.
+    # An unknown character width must not be mistaken for a zero physical indent.
+    for physical, chars in (("firstLineIn", "firstLineChars"), ("hangingIn", "hangingChars")):
+        if props.get(chars) is not None:
+            # Character width depends on the font and layout engine. Never claim
+            # an exact physical value from a point-size approximation.
+            props[physical] = 0 if props[chars] == 0 else None
+    if props.get("hangingIn") is not None or props.get("hangingChars") is not None:
+        props["firstLineIn"] = 0
+    props.setdefault("hangingIn", 0)
+    if props["hangingIn"] is None and props.get("hangingChars") is None:
+        props["hangingIn"] = 0
+    return props, fonts, border
+
+
+def marginal_paragraph(paragraph: Node, context) -> dict[str, Any]:
+    """Describe visible text and field instructions without treating cached values as text."""
+    segments: list[dict[str, Any]] = []
+    field: dict[str, Any] | None = None
+    for child in element_children(paragraph):
+        if child.nodeName == "w:fldSimple":
+            segments.append({"field": " ".join((attr(child, "w:instr") or "").split()),
+                             "runs": [marginal_effective_props(paragraph, run, context)[1]
+                                      for run in child.getElementsByTagName("w:r")
+                                      if run.getElementsByTagName("w:t")]})
+            continue
+        # Runs inside hyperlinks and content controls are visible too.
+        runs = [child] if child.nodeName == "w:r" else list(child.getElementsByTagName("w:r"))
+        for run in runs:
+            ancestor = run.parentNode
+            while ancestor is not None and ancestor is not paragraph and ancestor.nodeName != "w:p":
+                ancestor = ancestor.parentNode
+            if ancestor is not paragraph:
+                continue
+            props = marginal_effective_props(paragraph, run, context)[1]
+            for node in element_children(run):
+                value = "".join(c.data for c in node.childNodes if c.nodeType == Node.TEXT_NODE)
+                if node.nodeName == "w:fldChar":
+                    kind = attr(node, "w:fldCharType")
+                    if kind == "begin":
+                        field = {"field": "", "runs": []}
+                        segments.append(field)
+                    elif kind == "end":
+                        field = None
+                elif node.nodeName == "w:instrText" and field is not None:
+                    field["field"] += value
+                elif node.nodeName == "w:t":
+                    if field is not None:
+                        field["runs"].append(props)
+                    else:
+                        segments.append({"text": value, "runs": [props]})
+    for segment in segments:
+        if "field" in segment:
+            segment["field"] = " ".join(segment["field"].split())
+    props, _, border = marginal_effective_props(paragraph, None, context)
+    return {"paragraph": props, "segments": segments, "bottomBorder": border}
+
+
 def marginal_inventory(parts: dict[str, bytes]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for name in sorted(parts):
-        if not re.fullmatch(r"word/(header|footer)\d+\.xml", name):
-            continue
+    context = marginal_style_context(parts)
+    for name in sorted(marginal_part_names(parts)):
         try:
             document = parse_xml(parts[name])
         except Exception:
@@ -400,9 +583,14 @@ def marginal_inventory(parts: dict[str, bytes]) -> list[dict[str, Any]]:
         out.append(
             {
                 "part": name,
+                "kind": {"w:hdr": "header", "w:ftr": "footer"}.get(document.documentElement.nodeName),
                 "paragraphs": len(document.getElementsByTagName("w:p")),
                 "text": text,
                 "fields": instructions,
+                "paragraphDetails": [marginal_paragraph(node, context) for node in document.getElementsByTagName("w:p")],
+                "unsupportedLayouts": (["floating or positioned text box content requires layout-aware preservation"]
+                                       if document.getElementsByTagName("w:txbxContent") else []),
+                "hasObjects": (any(document.getElementsByTagName(tag) for tag in ("w:drawing", "w:pict")) and not document.getElementsByTagName("w:txbxContent")) or any(document.getElementsByTagName(tag) for tag in ("w:object", "w:sym", "w:tab", "w:br", "w:cr", "w:ptab", "w:tbl", "w:altChunk", "w:noBreakHyphen", "w:softHyphen", "m:oMath", "m:oMathPara")),
             }
         )
     return out
@@ -451,6 +639,7 @@ def audit(path: Path) -> dict[str, Any]:
             even_and_odd_headers = value not in {"0", "false", "off"}
 
     sections = document_sections(document)
+    marginal_parts = marginal_inventory(parts)
     return {
         "path": str(path.resolve()),
         "package": {
@@ -478,10 +667,10 @@ def audit(path: Path) -> dict[str, Any]:
         "fields": {**field_inventory(parts), "updateOnOpen": update_fields},
         "bookmarks": bookmark_inventory(document),
         "marginals": {
-            "headers": len([name for name in parts if re.fullmatch(r"word/header\d+\.xml", name)]),
-            "footers": len([name for name in parts if re.fullmatch(r"word/footer\d+\.xml", name)]),
+            "headers": sum(part["kind"] == "header" for part in marginal_parts),
+            "footers": sum(part["kind"] == "footer" for part in marginal_parts),
             "evenAndOddHeaders": even_and_odd_headers,
-            "parts": marginal_inventory(parts),
+            "parts": marginal_parts,
         },
         "numbering": numbering_inventory(parts),
     }

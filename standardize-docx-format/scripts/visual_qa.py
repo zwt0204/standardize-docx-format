@@ -8,6 +8,8 @@ import json
 import shutil
 import subprocess
 import sys
+import tempfile
+import html
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -32,55 +34,29 @@ def add_issue(
     issues.append(payload)
 
 
-def table_widths(document) -> list[float | None]:
-    widths: list[float | None] = []
-    for tbl in document.getElementsByTagName("w:tbl"):
-        tbl_pr = direct_child(tbl, "w:tblPr")
-        tbl_w = direct_child(tbl_pr, "w:tblW")
-        widths.append(twips_to_inches(attr(tbl_w, "w:w")) if tbl_w is not None else None)
-    return widths
-
-
 def detect_structural_layout_issues(path: Path, model: dict[str, Any]) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
-    with zipfile.ZipFile(path, "r") as archive:
-        document = parse_xml(archive.read("word/document.xml"))
-    sections = (model.get("audit") or {}).get("sections") or []
-    content_boxes = [page_content_box(section) for section in sections]
-    max_content_width = max((box.get("contentWidthIn") or 0) for box in content_boxes) if content_boxes else None
-
     drawing_index = 0
     for info in model.get("blocks") or []:
-        width = info.get("drawingWidthIn")
-        if not width:
-            continue
-        if max_content_width and width > max_content_width + 0.05:
-            add_issue(
-                issues,
-                "image_overflow",
-                "error",
-                f"图片 {drawing_index + 1} 宽度 {width}in 超出正文区域 {max_content_width}in",
-                drawingIndex=drawing_index,
-                paragraphIndex=info.get("index"),
-                widthIn=width,
-                contentWidthIn=max_content_width,
-                suggestion="scale drawing to content width",
-                repair="scale_drawing",
-            )
-        drawing_index += 1
-
-    for index, width in enumerate(table_widths(document)):
-        if max_content_width and width and width > max_content_width + 0.08:
-            add_issue(
-                issues,
-                "table_overflow",
-                "error",
-                f"表格 {index + 1} 宽度 {width}in 超出正文区域 {max_content_width}in",
-                tableIndex=index,
-                widthIn=width,
-                contentWidthIn=max_content_width,
-                suggestion="narrow the table to the text column",
-            )
+        container = info.get("containerWidthIn")
+        widths = info.get("drawingWidthsIn") or [info.get("drawingWidthIn")]
+        for width in widths:
+            if not width:
+                continue
+            if container and width > container + 0.05:
+                add_issue(issues, "image_overflow", "error",
+                          f"图片 {drawing_index + 1} 宽度 {width}in 超出所在容器 {container}in",
+                          drawingIndex=drawing_index, paragraphIndex=info.get("index"),
+                          widthIn=width, contentWidthIn=container,
+                          suggestion="scale drawing to container width", repair="scale_drawing")
+            drawing_index += 1
+    for table in model.get("tables") or []:
+        width, container = table.get("widthIn"), table.get("containerWidthIn")
+        if container and width and width > container + 0.08:
+            add_issue(issues, "table_overflow", "error",
+                      f"表格 {table['index'] + 1} 宽度 {width}in 超出所在容器 {container}in",
+                      tableIndex=table["index"], widthIn=width, contentWidthIn=container,
+                      suggestion="narrow the table to its container")
 
     blocks = model.get("blocks") or []
     heading_types = {"chapter", "section", "subsection"}
@@ -166,49 +142,39 @@ def run_command(command: list[str], cwd: Path | None = None) -> subprocess.Compl
 
 def render_document(input_path: Path, output_dir: Path) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    # A fresh directory prevents stale PDFs/PNGs from satisfying this run.
+    target = Path(tempfile.mkdtemp(prefix="render-", dir=output_dir.resolve()))
+    input_path = input_path.resolve()
     docx_cli = shutil.which("docx")
     if docx_cli:
-        target = output_dir / "rendered"
         result = run_command([docx_cli, "render", str(input_path), "--out", str(target)])
-        return {
-            "engine": "docx-cli",
-            "ok": result.returncode == 0,
-            "command": result.args,
-            "stdout": result.stdout[-2000:],
-            "stderr": result.stderr[-2000:],
-            "outputDir": str(target),
-        }
-
+        pages = sorted([*target.rglob("*.png"), *target.rglob("*.jpg")])
+        pdfs = sorted(target.rglob("*.pdf"))
+        ok = result.returncode == 0 and bool(pages or pdfs)
+        return {"engine": "docx-cli", "ok": ok, "status": "succeeded" if ok else "failed",
+                "command": result.args, "stdout": result.stdout[-2000:], "stderr": result.stderr[-2000:],
+                "pages": [str(p) for p in pages], "pdf": str(pdfs[0]) if pdfs else None,
+                "outputDir": str(target)}
     soffice = which(["soffice", "libreoffice"])
     if soffice:
-        result = run_command(
-            [soffice, "--headless", "--convert-to", "pdf", "--outdir", str(output_dir), str(input_path)]
-        )
-        pdfs = sorted(output_dir.glob("*.pdf"))
+        result = run_command([soffice, "--headless", "--convert-to", "pdf", "--outdir", str(target), str(input_path)])
+        pdf = target / (input_path.stem + ".pdf")
+        ok = result.returncode == 0 and pdf.is_file() and pdf.stat().st_size > 0
         pdftoppm = shutil.which("pdftoppm")
         pages: list[str] = []
-        if pdftoppm and pdfs:
-            prefix = output_dir / "page"
-            run_command([pdftoppm, "-png", str(pdfs[0]), str(prefix)])
-            pages = [str(path) for path in sorted(output_dir.glob("page*.png"))]
-        return {
-            "engine": "libreoffice",
-            "ok": result.returncode == 0 and bool(pdfs),
-            "command": result.args,
-            "stdout": result.stdout[-2000:],
-            "stderr": result.stderr[-2000:],
-            "pdf": str(pdfs[0]) if pdfs else None,
-            "pages": pages,
-            "outputDir": str(output_dir),
-        }
-
-    return {
-        "engine": None,
-        "ok": False,
-        "skipped": True,
-        "reason": "Neither docx-cli nor LibreOffice is available; structural visual heuristics still ran.",
-        "outputDir": str(output_dir),
-    }
+        raster = None
+        if pdftoppm and ok:
+            raster_result = run_command([pdftoppm, "-png", str(pdf), str(target / "page")])
+            raster = {"ok": raster_result.returncode == 0, "stderr": raster_result.stderr[-2000:]}
+            if raster["ok"]:
+                pages = [str(path) for path in sorted(target.glob("page*.png"))]
+        return {"engine": "libreoffice", "ok": ok, "status": "succeeded" if ok else "failed",
+                "command": result.args, "stdout": result.stdout[-2000:], "stderr": result.stderr[-2000:],
+                "pdf": str(pdf) if ok else None, "pages": pages, "rasterization": raster,
+                "outputDir": str(target)}
+    return {"engine": None, "ok": False, "skipped": True, "status": "unavailable",
+            "reason": "Neither docx-cli nor LibreOffice is available; only estimated checks ran.",
+            "outputDir": str(target)}
 
 
 def inspect_rendered_pages(render: dict[str, Any]) -> list[dict[str, Any]]:
@@ -231,9 +197,12 @@ def visual_qa(input_path: Path, profile: dict[str, Any] | None, render_dir: Path
     issues = detect_structural_layout_issues(input_path, model)
     estimate = paginate(model)
     issues.extend(detect_pagination_issues(estimate))
-    render: dict[str, Any] = {"skipped": True, "reason": "render not requested"}
+    render: dict[str, Any] = {"ok": None, "skipped": True, "status": "not_requested", "reason": "render not requested"}
     if render_dir is not None:
-        render = render_document(input_path, render_dir)
+        try:
+            render = render_document(input_path, render_dir)
+        except (OSError, subprocess.SubprocessError) as exc:
+            render = {"ok": False, "status": "failed", "reason": str(exc)}
         issues.extend(inspect_rendered_pages(render))
     # Prefer page-estimated orphan_heading over the weaker keepNext-only risk when both exist.
     seen_heading = {
@@ -243,19 +212,22 @@ def visual_qa(input_path: Path, profile: dict[str, Any] | None, render_dir: Path
     }
     deduped = []
     for item in issues:
-        key = (item.get("type"), item.get("paragraphIndex"))
+        key = (item.get("type"), item.get("paragraphIndex"), item.get("tableIndex"), item.get("page"), item.get("drawingIndex"))
         if item.get("type") == "orphan_heading_risk" and ("orphan_heading", item.get("paragraphIndex")) in seen_heading:
             continue
         if item.get("type") == "orphan_heading_risk" and ("heading_body_split", item.get("paragraphIndex")) in seen_heading:
             continue
-        if key in {(d.get("type"), d.get("paragraphIndex")) for d in deduped}:
+        if key in {(d.get("type"), d.get("paragraphIndex"), d.get("tableIndex"), d.get("page"), d.get("drawingIndex")) for d in deduped}:
             continue
         deduped.append(item)
     issues = deduped
     errors = [item for item in issues if item.get("severity") == "error"]
     warnings = [item for item in issues if item.get("severity") == "warning"]
     return {
-        "ok": not errors,
+        "ok": not errors and (render_dir is None or bool(render.get("ok"))),
+        "heuristicStatus": "failed" if errors else "passed_with_warnings" if warnings else "passed",
+        "visualConfirmation": {"status": "pending", "required": True,
+                               "reason": "Estimated checks and rendering do not constitute manual visual acceptance."},
         "input": str(input_path.resolve()),
         "issues": issues,
         "errorCount": len(errors),
@@ -282,7 +254,7 @@ def write_html_report(result: dict[str, Any], output: Path) -> None:
             "<tr>"
             f"<td>{item.get('severity')}</td>"
             f"<td>{item.get('type')}</td>"
-            f"<td>{item.get('message')}</td>"
+            f"<td>{html.escape(str(item.get('message') or ''))}</td>"
             f"<td>{item.get('page', '')} / {item.get('paragraphIndex', '')}</td>"
             "</tr>"
         )
@@ -304,7 +276,8 @@ def write_html_report(result: dict[str, Any], output: Path) -> None:
 <body>
   <h1>Visual QA</h1>
   <p class="{'ok' if result.get('ok') else 'bad'}">errors={result.get('errorCount')} warnings={result.get('warningCount')}</p>
-  <p>render: {(result.get('render') or {}).get('engine') or 'none'}; pagination: {(result.get('pagination') or {}).get('pageCount') or '?'} estimated pages</p>
+  <p>heuristics: {result.get("heuristicStatus")}; manual visual confirmation: pending</p>
+  <p>render: {(result.get("render") or {}).get("status")}; pagination: {(result.get('pagination') or {}).get('pageCount') or '?'} estimated pages</p>
   <table>
     <thead><tr><th>severity</th><th>type</th><th>message</th><th>where</th></tr></thead>
     <tbody>

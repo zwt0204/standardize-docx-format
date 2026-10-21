@@ -174,6 +174,7 @@ def compile_text(source_text: str, source_name: str = "specification") -> dict[s
     heading_numbering: dict[str, Any] = {}
     page_numbers: list[dict[str, Any]] = []
     headers_footers: list[dict[str, Any]] = []
+    table_rules: list[dict[str, Any]] = []
     caption_numbering: dict[str, Any] = {}
     document_type = infer_document_type(source_text)
     validation: dict[str, Any] = {
@@ -212,7 +213,7 @@ def compile_text(source_text: str, source_name: str = "specification") -> dict[s
         if "页边距" in line and not margin_matches:
             unresolved.append(f"页边距未量化: {line}")
 
-        if re.search(r"正文|主体|body", line) and (find_font(line) or find_size_pt(line) or "行距" in line or "倍" in line):
+        if not re.search(r"表格|三线表|\btable", line, re.I) and re.search(r"正文|主体|body", line) and (find_font(line) or find_size_pt(line) or "行距" in line or "倍" in line):
             font = find_font(line)
             size = find_size_pt(line)
             if font:
@@ -286,6 +287,15 @@ def compile_text(source_text: str, source_name: str = "specification") -> dict[s
             }
             add_rule(rules, "headingNumbering", "enabled", True, line, "medium")
 
+        if re.search(r"三线表|three[- ]line table", line, re.I):
+            add_rule(rules, "tableRules", "preset", "three-line", line)
+            from table_inference import compile_table_clause
+            table_rule = compile_table_clause(line)
+            if table_rule:
+                table_rules.append(table_rule)
+            else:
+                unresolved.append(f"三线表要求待定位：请明确正文表格索引（从0开始）、表头行数及上下线/表头线宽后填写 tableRules: {line}")
+
         if re.search(r"页眉", line):
             add_rule(rules, "headersFooters.header", "present", True, line, "medium")
             text = None
@@ -307,22 +317,30 @@ def compile_text(source_text: str, source_name: str = "specification") -> dict[s
             if not text:
                 unresolved.append(f"页眉内容未量化: {line}")
         if re.search(r"页脚", line) or re.search(r"页码.{0,6}(居中|底部|页脚)", line):
-            add_rule(rules, "headersFooters.footer", "page", True, line, "medium")
-            headers_footers.append(
-                {
-                    "section": 1,
-                    "kind": "footer",
-                    "type": "default",
-                    "action": "set",
-                    "paragraphs": [
-                        {
-                            "alignment": "center",
-                            "segments": [{"field": "PAGE", "result": "1"}],
-                        }
-                    ],
-                }
-            )
-            validation.setdefault("requiredFields", {})["PAGE"] = 1
+            clear_footer = bool(re.search(r"页脚.{0,6}(空白|留空|无内容)|页脚不显示(?:[。；，,.]|$)|(?:不显示|不设|不要|无)页脚", line))
+            no_page = bool(re.search(r"(?:无|不设|不显示|不要)页码|页码.{0,3}(不显示|取消|隐藏)", line))
+            if no_page and not clear_footer:
+                unresolved.append(f"页脚要求不显示页码，需确认保留的其他内容并定位 PAGE 域，不能整体清空: {line}")
+            elif not clear_footer and "页码" not in line:
+                unresolved.append(f"页脚内容未量化，不自动插入 PAGE 域: {line}")
+            else:
+                add_rule(rules, "headersFooters.footer", "page", True, line, "medium")
+                headers_footers.append(
+                    {
+                        "section": 1,
+                        "kind": "footer",
+                        "type": "default",
+                        "action": "clear" if clear_footer else "set",
+                        "paragraphs": [] if clear_footer else [
+                            {
+                                "alignment": "center",
+                                "segments": [{"field": "PAGE", "result": "1"}],
+                            }
+                        ],
+                    }
+                )
+                if not clear_footer:
+                    validation.setdefault("requiredFields", {})["PAGE"] = 1
 
         if re.search(r"目录", line) and re.search(r"自动|域|字段|三级|两级|1-2|1-3", line):
             add_rule(rules, "fields", "TOC", True, line, "medium")
@@ -429,8 +447,11 @@ def compile_text(source_text: str, source_name: str = "specification") -> dict[s
         profile["pageNumbers"] = unique_page_numbers
     if unique_headers:
         profile["headersFooters"] = unique_headers
+        unresolved.append("页眉页脚草稿使用 section 1；请按实际文档分节确认索引和首页/奇偶页范围")
     if caption_numbering:
         profile["captionNumbering"] = caption_numbering
+    if table_rules:
+        profile["tableRules"] = table_rules
     ensure_profile(profile)
 
     return {

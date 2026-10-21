@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -143,6 +144,53 @@ def validate_profile(profile: Any, schema: dict[str, Any] | None = None) -> list
 
 def _semantic_checks(profile: dict[str, Any]) -> list[str]:
     errors: list[str] = []
+    seen_tables: set[int] = set()
+    for index, rule in enumerate(profile.get("tableRules") or []):
+        if not isinstance(rule, dict):
+            continue
+        color = rule.get("color", "000000")
+        if isinstance(color, str) and not re.fullmatch(r"#?[0-9A-Fa-f]{6}|auto", color):
+            errors.append(f"tableRules[{index}].color: expected six hex digits or auto")
+        indexes = rule.get("tableIndexes")
+        for table_index in indexes if isinstance(indexes, list) else []:
+            if not isinstance(table_index, int):
+                continue
+            if table_index in seen_tables:
+                errors.append(f"tableRules[{index}]: table {table_index} is targeted more than once")
+            seen_tables.add(table_index)
+        for key in ("outerSizePt", "headerSizePt"):
+            value = rule.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and value * 8 != round(value * 8):
+                errors.append(f"tableRules[{index}].{key}: must be a multiple of 0.125 pt")
+        widths, width = rule.get("columnWidthsIn"), rule.get("widthIn")
+        if (isinstance(widths, list) and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in widths)
+                and isinstance(width, (int, float)) and abs(width - sum(widths)) > 1 / 1440):
+            errors.append(f"tableRules[{index}]: widthIn must equal the sum of columnWidthsIn")
+        paragraph = rule.get("paragraph")
+        supported_p = {"alignment", "lineSpacing", "lineSpacingExactPt", "spaceBeforePt", "spaceAfterPt", "leftIn", "rightIn", "firstLineIn", "hangingIn", "firstLineChars", "keepNext", "keepLines", "pageBreakBefore", "widowControl", "outlineLevel"}
+        run = rule.get("run")
+        supported_r = {"latinFont", "eastAsiaFont", "complexScriptFont", "sizePt", "bold", "italic", "color"}
+        for label, config, supported in (("paragraph", paragraph, supported_p), ("run", run, supported_r)):
+            if isinstance(config, dict):
+                for key in config.keys() - supported:
+                    errors.append(f"tableRules[{index}].{label}.{key}: unsupported property")
+        if isinstance(paragraph, dict):
+            if paragraph.get("alignment") not in {None, "left", "center", "right", "justify"}:
+                errors.append(f"tableRules[{index}].paragraph.alignment: unsupported alignment")
+            for keys in (("lineSpacing", "lineSpacingExactPt"), ("firstLineIn", "firstLineChars"), ("hangingIn", "firstLineIn"), ("hangingIn", "firstLineChars")):
+                if all(key in paragraph for key in keys):
+                    errors.append(f"tableRules[{index}].paragraph: conflicting {keys[0]} and {keys[1]}")
+            for key in ("lineSpacing", "lineSpacingExactPt", "spaceBeforePt", "spaceAfterPt", "leftIn", "rightIn", "firstLineIn", "hangingIn", "firstLineChars"):
+                value = paragraph.get(key)
+                if isinstance(value, (int, float)) and (value < 0 or (key in {"lineSpacing", "lineSpacingExactPt"} and value == 0)):
+                    errors.append(f"tableRules[{index}].paragraph.{key}: invalid negative or zero value")
+        if isinstance(run, dict):
+            value = run.get("sizePt")
+            if isinstance(value, (int, float)) and (value <= 0 or value * 2 != round(value * 2)):
+                errors.append(f"tableRules[{index}].run.sizePt: expected a positive multiple of 0.5 pt")
+            color = run.get("color")
+            if isinstance(color, str) and not re.fullmatch(r"#?[0-9A-Fa-f]{6}", color):
+                errors.append(f"tableRules[{index}].run.color: expected six hex digits")
     numbering = profile.get("headingNumbering") or {}
     if isinstance(numbering, dict) and numbering.get("enabled") is True:
         styles = numbering.get("styles")

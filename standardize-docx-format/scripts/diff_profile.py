@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from audit_docx import audit
+from marginal_format import marginal_expectation
 from document_model import build_model, document_spec
+from table_format import table_checks
+from xml.dom import minidom
+import zipfile
 
 
 PAGE_SIZES_IN = {
@@ -311,26 +315,29 @@ def diff_page_numbers(findings: list[dict[str, Any]], report: dict[str, Any], pr
 
 
 def diff_headers(findings: list[dict[str, Any]], report: dict[str, Any], profile: dict[str, Any]) -> None:
-    sections = report.get("sections") or []
     for index, item in enumerate(profile.get("headersFooters") or []):
         if not isinstance(item, dict) or item.get("action", "set") == "inherit":
             continue
-        section_index = item.get("section")
-        kind = item.get("kind")
-        reference_type = item.get("type", "default")
-        actual_refs = []
-        if isinstance(section_index, int) and 0 <= section_index < len(sections):
-            actual_refs = sections[section_index].get(f"{kind}References") or []
-        ok = any(reference.get("type") == reference_type for reference in actual_refs)
+        ok, actual = marginal_expectation(report, item)
         add_finding(
-            findings,
-            "headersFooters",
-            f"headersFooters[{index}]",
-            ok,
-            {"section": section_index, "kind": kind, "type": reference_type},
-            actual_refs,
-            suggestion=f"create {kind} {reference_type} for section {section_index}",
+            findings, "headersFooters", f"headersFooters[{index}]", ok,
+            item, actual, suggestion="apply header/footer content, formatting, and visibility settings",
         )
+        section_index = item.get("section")
+        sections = report.get("sections") or []
+        if isinstance(section_index, int) and 0 <= section_index < len(sections):
+            kind, ref_type = item.get("kind"), item.get("type", "default")
+            inherited = []
+            for later in range(section_index + 1, len(sections)):
+                if any(ref.get("type") == ref_type for ref in sections[later].get(f"{kind}References", [])):
+                    break
+                inherited.append(later)
+            findings[-1]["impact"] = {
+                "section": section_index, "inheritingSections": inherited,
+                "visibility": ("even/odd setting is document-wide" if ref_type == "even" else
+                               "first-page setting affects both header and footer in this section" if ref_type == "first" else "default pages"),
+                "note": "Word inheritance is preserved; later linked sections may display this change.",
+            }
 
 
 def diff_structure(findings: list[dict[str, Any]], model: dict[str, Any], profile: dict[str, Any]) -> None:
@@ -391,6 +398,12 @@ def diff_document(input_path: Path, profile: dict[str, Any]) -> dict[str, Any]:
     diff_styles(findings, report, profile)
     diff_page_numbers(findings, report, profile)
     diff_headers(findings, report, profile)
+    if profile.get("tableRules"):
+        with zipfile.ZipFile(input_path) as archive:
+            parts = {name: archive.read(name) for name in archive.namelist()}
+            document = minidom.parseString(parts["word/document.xml"])
+        for check in table_checks(document, profile["tableRules"], parts):
+            add_finding(findings, "tables", check["name"], check["ok"], check["expected"], check["actual"], suggestion="apply three-line borders to the selected body tables")
     diff_structure(findings, model, profile)
     failed = [item for item in findings if not item["ok"]]
     categories: dict[str, dict[str, int]] = {}

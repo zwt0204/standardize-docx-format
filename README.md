@@ -32,6 +32,7 @@ Skill 运行时说明（英文，给 Codex 读）见 [`standardize-docx-format/S
 - 支持字号、粗体、斜体、颜色、段前段后、行距、首行缩进、悬挂缩进、两端对齐和分页控制。
 - 支持罗马页码、阿拉伯页码和正文重新从 1 编号。
 - 支持首页、普通页、偶数页分别设置页眉页脚；官方模板可 `action: inherit`，不重建封面坐标、不删除已有页眉页脚引用。
+- 支持按正文表格索引应用三线表，分别设置上下边线和表头分隔线，清除竖线，并验证实际边框及重复表头。
 - 支持中文论文多级自动编号：`一、`、`（一）`、`1.`、`（1）`、`①`。
 - 支持自动目录、PAGE、NUMPAGES、SEQ、REF、PAGEREF、STYLEREF、CITATION、BIBLIOGRAPHY 等 Word 字段。
 - 支持书签、题注、图表编号和交叉引用基础设施；题注章号策略见 `captionNumbering`。
@@ -331,7 +332,7 @@ python .\standardize-docx-format\scripts\standardize.py visual `
 
 1. 若存在 `docx` 命令：`docx render … --out <render-dir>/rendered`
 2. 否则 LibreOffice `--headless --convert-to pdf`；若有 `pdftoppm` 再切 `page*.png`
-3. 都没有则 `render.skipped=true`，启发式报告仍会写出
+3. 都没有则 `render.skipped=true`、`render.status=unavailable`，启发式报告仍会写出；明确请求渲染时顶层 `ok=false`
 
 机器目前只会标「PNG 相对中位过小（可能空白页）」和「PDF 过小（可能转换失败）」。页眉叠字、表格溢出、封面位移、目录页码、中文编号、STYLEREF **必须看图或在 Word 里看**。
 
@@ -584,6 +585,36 @@ python .\standardize-docx-format\scripts\standardize.py repair-visual --input th
 
 创建偶数页页眉或页脚时，脚本会同步启用 Word 的奇偶页设置。
 
+Diff 和 Validate 会核对页眉页脚实际文字、字段指令、指定字体、段落格式、下边框，以及首页/奇偶页开关；`clear` 要求槽位实际为空。页码域的缓存结果更新不会被当作格式错误。`inherit` 继续保留模板原样，不做内容重建。
+
+## 三线表
+
+先审查目标表格，再通过 `tableRules` 明确选择，避免误改封面和签字表：
+
+```json
+{
+  "tableRules": [
+    {
+      "tableIndexes": [0, 2],
+      "preset": "three-line",
+      "headerRows": 1,
+      "outerSizePt": 1.5,
+      "headerSizePt": 0.75,
+      "color": "000000",
+      "repeatHeader": true
+    }
+  ]
+}
+```
+
+索引从 0 开始，仅计算正文中的外层表格；嵌套表格、文本框和页眉页脚内的表格不计入。示例线宽不是学校标准，应按规范调整。省略时默认表头 1 行、上下线 1.5 磅、表头线 0.75 磅、黑色并重复表头。脚本同时覆盖单元格已有边框，避免原有竖线和内横线残留；默认保留内容、列宽及合并结构。
+
+表格必须至少包含一行表头和一行数据。跨越表头边界的纵向合并、包装在修订或内容控件内的行/单元格会拒绝应用，要求先明确处理方式。同一表格不得被多条规则重复选择。Diff、Repair Plan（`set_table`）、按计划应用与 Validate 均支持这些规则。规范编译器对单条明确指令（如“正文表格索引0,2采用三线表，表头行数1，上下线1.5磅，表头线0.75磅”）生成规则；缺少定位或量化参数仍记录待确认项。模板分析仅保守提取完整显式三线边框，应用前须确认目标索引映射。
+
+可选 `paragraph` / `run` 统一所选表内段落与字体，`allowRowSplit: false` 禁止行拆分；`alignment`、`widthIn`、`columnWidthsIn` 控制表格对齐、首选总宽和固定网格列宽。未指定属性保留原样；复杂网格不能安全调整时拒绝应用。Diff 和 Validate 同时验收这些要求。
+
+页眉页脚计划中的 `impact` 会提示后续继承节和可见性开关范围，保留 Word 的链接行为。字符缩进与物理缩进冲突须按生效值验收；不能安全表达的非零冲突应明确拒绝。
+
 ## 语义段落映射
 
 旧论文经常使用手工编号和大量直接格式。可以用有界规则把段落映射到语义样式：
@@ -755,3 +786,5 @@ Skill 结构校验可使用 Codex 自带的 `skill-creator/scripts/quick_validat
 ## 许可证
 
 当前仓库未附加开源许可证。未经版权所有者明确授权，默认保留全部权利。
+
+视觉 QA 的 `heuristicStatus`、`render.status`、`visualConfirmation` 分别表示启发式检查、渲染状态与人工确认。表格分页考虑行内最大单元格高度、重复表头和拆行，但仍为估算；渲染成功不自动将人工确认标为通过。

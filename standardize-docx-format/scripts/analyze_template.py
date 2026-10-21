@@ -8,6 +8,7 @@ import json
 import re
 import sys
 import zipfile
+from xml.dom import minidom
 from pathlib import Path
 from typing import Any
 
@@ -382,6 +383,9 @@ def analyze_template(path: Path) -> dict[str, Any]:
     else:
         unresolved.append("模板未检测到 {{PLACEHOLDER}} / 【】 / ＜＞ 占位符；精确封面应先在官方模板副本中建立稳定占位符")
     paragraph_rules = infer_paragraph_rules(model)
+    from table_inference import infer_template_tables
+    table_rules, table_unresolved = infer_template_tables(minidom.parseString(parts["word/document.xml"]))
+    unresolved.extend(table_unresolved)
     caption_numbering = detect_caption_strategy(heading_numbering, unresolved)
     kinds = (report.get("fields") or {}).get("kinds") or {}
     if int(kinds.get("TOC") or 0) == 0:
@@ -429,6 +433,8 @@ def analyze_template(path: Path) -> dict[str, Any]:
         profile["replacements"] = replacements
     if field_rules:
         profile["fieldRules"] = field_rules
+    if table_rules:
+        profile["tableRules"] = table_rules
     ensure_profile(profile)
     return {
         "ok": True,
@@ -442,6 +448,7 @@ def analyze_template(path: Path) -> dict[str, Any]:
             "placeholders": len(replacements),
             "headingNumbering": bool(heading_numbering),
             "paragraphRules": len(paragraph_rules),
+            "tableRules": len(table_rules),
         },
         "profile": profile,
         "unresolved": unresolved,

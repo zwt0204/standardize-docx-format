@@ -62,7 +62,7 @@ v2 compiler commands live in `scripts/standardize.py`. Prefer this sequence over
 4. `apply` only after confirmation. Never apply a repair plan silently. Prefer `apply --plan repair-plan.json --only-auto --yes` so only confirmed auto steps run. `map_structure` and `pageBreakBefore` require explicit `--only-ids`.
 5. Validate the profile with `standardize.py schema` or by letting apply/compile/analyze-template run the bundled JSON Schema.
 6. `validate` for structural checks and `visual` for layout risks / pagination estimates / optional render.
-7. `repair-visual` only after confirmation, and only for conservative keepNext / image-scale fixes.
+7. `repair-visual` only after confirmation, and only for conservative keepNext / image-scale fixes. Documents with markup compatibility branches require a template-preserving locator edit; automatic numeric paragraph repair is refused.
 
 Read [references/v2-architecture.md](references/v2-architecture.md) when building a semantic AST, repair plan, or visual QA loop.
 
@@ -107,6 +107,8 @@ Use the v2 audit to inspect bookmarks, fields, drawings/text boxes, content cont
 - Represent heading numbering with composite patterns such as `%1`, `%1.%2`, `一、`, `（一）`, and `①` through `patterns` plus the corresponding Word number format.
 - Keep semantic fields such as TOC, SEQ, REF, PAGEREF, CITATION, and BIBLIOGRAPHY as fields.
 - Use `paragraphRules` only with bounded, auditable locators. Avoid broad global direct-format clearing.
+- Use `tableRules` for explicitly selected zero-based outer body table indexes: three-line borders, repeating headers, optional paragraph/run formatting, row splitting, table alignment and widths. Read the table section in [references/profile-schema.md](references/profile-schema.md). Exclude cover/signature tables and inspect merged cells before selecting targets. Never infer all tables from “three-line tables” alone. If compatibility branches contain tables, numeric table indexes are refused; use template-preserving locators.
+- For headers/footers, inspect section linkage and first/default/even visibility before setting content. Report inheriting sections from the repair plan. Preserve floating text boxes and compatibility layouts; unsupported reconstruction needs a template-preserving edit rather than replacement.
 - Use `replacements` for exact cover/header/footer/text-box placeholders. Never replace floating objects with ordinary body paragraphs.
 - Record structural checks, abstract word counts, required fields/bookmarks, and residual placeholder patterns in `validation`.
 
@@ -174,7 +176,8 @@ Verify all of the following:
 - Fields remain fields and `updateFields` is enabled when field results may be stale.
 - Required bookmarks, TOC/SEQ/REF/PAGEREF/CITATION/BIBLIOGRAPHY fields, sections, chapter text, and word-count ranges pass the validation profile.
 - No unresolved double-brace placeholder or template instructional text remains when prohibited.
-- No unexpected reflow, clipped image, broken table, blank page, orphan heading, or cover-page shift appears in rendered pages.
+- No unexpected reflow, clipped image, broken table, blank page, orphan heading, or cover-page shift appears in rendered pages. Check tables across page breaks, repeating headers, and row splitting.
+- Keep evidence separate: `heuristicStatus` describes estimates, `render.status` describes rendering, and `visualConfirmation` remains pending until human inspection. A successful render alone does not prove layout compliance. Explicitly requested rendering that fails makes visual QA fail.
 
 ## Standardization priorities
 

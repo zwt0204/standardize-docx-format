@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from table_format import table_checks
+
 import argparse
 import json
 import re
@@ -13,6 +15,7 @@ from typing import Any
 from xml.dom import Node, minidom
 
 from audit_docx import audit
+from marginal_format import marginal_expectation
 from document_model import build_model, document_spec
 from profile_schema import ensure_profile
 
@@ -190,20 +193,8 @@ def validate_profile_expectations(
     for index, item in enumerate(profile.get("headersFooters", [])):
         if not isinstance(item, dict) or item.get("action", "set") == "inherit":
             continue
-        section_index = item.get("section")
-        kind = item.get("kind")
-        reference_type = item.get("type", "default")
-        actual_refs = []
-        if isinstance(section_index, int) and 0 <= section_index < len(sections):
-            actual_refs = sections[section_index].get(f"{kind}References", [])
-        ok = any(reference.get("type") == reference_type for reference in actual_refs)
-        add_check(
-            checks,
-            f"headersFooters[{index}]",
-            ok,
-            {"section": section_index, "kind": kind, "type": reference_type},
-            actual_refs,
-        )
+        ok, actual = marginal_expectation(report, item)
+        add_check(checks, f"headersFooters[{index}]", ok, item, actual)
 
 
 def validate_docx(input_path: Path, profile_path: Path) -> dict[str, Any]:
@@ -216,7 +207,8 @@ def validate_docx(input_path: Path, profile_path: Path) -> dict[str, Any]:
         raise ValueError("validation must be an object")
     report = audit(input_path)
     with zipfile.ZipFile(input_path, "r") as archive:
-        document = minidom.parseString(archive.read("word/document.xml"))
+        parts = {name: archive.read(name) for name in archive.namelist()}
+        document = minidom.parseString(parts["word/document.xml"])
     paragraphs = paragraph_texts(document)
     full_text = "\n".join(paragraphs)
     checks: list[dict[str, Any]] = []
@@ -254,6 +246,8 @@ def validate_docx(input_path: Path, profile_path: Path) -> dict[str, Any]:
         add_check(checks, f"requiredStylesUsed.{style}", actual > 0, ">0", actual)
 
     validate_profile_expectations(checks, report, profile)
+    for check in table_checks(document, profile.get("tableRules", []), parts):
+        add_check(checks, check["name"], check["ok"], check["expected"], check["actual"])
     validate_document_spec(checks, profile, input_path)
     ok = all(check["ok"] for check in checks)
     return {

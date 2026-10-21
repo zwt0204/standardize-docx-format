@@ -42,6 +42,10 @@
       "type": "array",
       "items": { "$ref": "#/$defs/headerFooter" }
     },
+    "tableRules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/tableRule" }
+    },
     "replacements": {
       "type": "array",
       "items": { "$ref": "#/$defs/replacement" }
@@ -60,6 +64,26 @@
     "validation": { "$ref": "#/$defs/validation" }
   },
   "$defs": {
+    "tableRule": {
+      "type": "object",
+      "required": ["tableIndexes", "preset"],
+      "additionalProperties": false,
+      "properties": {
+        "tableIndexes": { "type": "array", "minItems": 1, "items": { "type": "integer", "minimum": 0 } },
+        "preset": { "type": "string", "enum": ["three-line"] },
+        "headerRows": { "type": "integer", "minimum": 1 },
+        "outerSizePt": { "type": "number", "minimum": 0.25, "maximum": 12 },
+        "headerSizePt": { "type": "number", "minimum": 0.25, "maximum": 12 },
+        "color": { "type": "string" },
+        "repeatHeader": { "type": "boolean" },
+        "paragraph": { "$ref": "#/$defs/paragraph" },
+        "run": { "$ref": "#/$defs/run" },
+        "allowRowSplit": { "type": "boolean" },
+        "alignment": { "type": "string", "enum": ["left", "center", "right"] },
+        "widthIn": { "type": "number", "minimum": 0.001 },
+        "columnWidthsIn": { "type": "array", "minItems": 1, "items": { "type": "number", "minimum": 0.001 } }
+      }
+    },
     "documentSpec": {
       "type": "object",
       "additionalProperties": true,
@@ -319,6 +343,7 @@
         "action": { "type": "string", "enum": ["set", "clear", "inherit"] },
         "note": { "type": "string" },
         "paragraphs": { "type": "array", "items": { "type": "object" } },
+        "paragraph": { "$ref": "#/$defs/paragraph" },
         "text": { "type": "string" },
         "alignment": { "type": "string" },
         "run": { "$ref": "#/$defs/run" },
